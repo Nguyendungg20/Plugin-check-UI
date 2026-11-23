@@ -1,0 +1,1180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Design vs UI Diff</title>
+<style>
+  :root {
+    --bg: var(--figma-color-bg, #fff);
+    --bg2: var(--figma-color-bg-secondary, #f5f5f5);
+    --fg: var(--figma-color-text, #222);
+    --fg2: var(--figma-color-text-secondary, #777);
+    --bd: var(--figma-color-border, #ddd);
+    --accent: var(--figma-color-bg-brand, #0d99ff);
+    --danger: #ff2d55;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 10px 12px 16px; background: var(--bg); color: var(--fg);
+         font: 11px/1.4 Inter, system-ui, sans-serif; }
+  h3 { margin: 12px 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+       letter-spacing: .04em; color: var(--fg2); }
+  h3:first-child { margin-top: 0; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row > label { flex: 1; display: flex; flex-direction: column; gap: 2px; color: var(--fg2); }
+  .row > label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--fg); }
+  input[type=text], input[type=number], select {
+    width: 100%; height: 26px; padding: 0 6px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--bd); border-radius: 4px; font: inherit; }
+  input[type=number] { width: 100%; }
+  button { height: 26px; padding: 0 10px; border: 1px solid var(--bd); border-radius: 4px;
+           background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--bg2); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff;
+                   width: 100%; height: 30px; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+  button.tab.active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .card { padding: 6px 8px; background: var(--bg2); border-radius: 4px; margin-bottom: 6px; }
+  .muted { color: var(--fg2); }
+  #drop { border: 1px dashed var(--bd); border-radius: 4px; padding: 14px 8px; text-align: center;
+          color: var(--fg2); cursor: pointer; }
+  #drop.over { border-color: var(--accent); background: var(--bg2); }
+  #thumbRow { display: none; gap: 8px; align-items: center; }
+  #thumb { height: 56px; max-width: 80px; object-fit: contain; border: 1px solid var(--bd); border-radius: 3px; }
+  details { border: 1px solid var(--bd); border-radius: 4px; padding: 4px 8px; margin: 10px 0; }
+  details summary { cursor: pointer; font-weight: 600; color: var(--fg2); text-transform: uppercase;
+                    font-size: 11px; letter-spacing: .04em; }
+  details[open] summary { margin-bottom: 6px; }
+  #status { min-height: 16px; margin: 6px 0; color: var(--fg2); }
+  #status.err { color: var(--danger); }
+  .warn { color: #b26a00; margin-top: 2px; }
+  #previewWrap { width: 100%; border: 1px solid var(--bd); border-radius: 4px; overflow: hidden;
+                 background: #fff; margin: 6px 0; }
+  #preview { display: block; width: 100%; }
+  #regions { max-height: 180px; overflow: auto; border: 1px solid var(--bd); border-radius: 4px; }
+  .reg { padding: 4px 8px; border-bottom: 1px solid var(--bd); cursor: pointer; display: flex;
+         align-items: center; gap: 6px; }
+  .reg .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reg .ig { height: 20px; padding: 0 6px; font-size: 10px; flex: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.size { background: #0d99ff; }
+  .dot.icon { background: #ff2d55; }
+  .dot.content { background: #ff2d55; }
+  .dot.spacing { background: #af52de; }
+  #ignored { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border-radius: 10px;
+          background: var(--bg2); border: 1px solid var(--bd); max-width: 160px; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip button { height: 16px; width: 16px; padding: 0; border: 0; border-radius: 50%; line-height: 1; }
+  .reg:last-child { border-bottom: 0; }
+  .reg:hover { background: var(--bg2); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<h3>Target node</h3>
+<div class="card" id="nodeInfo">Select a frame</div>
+<div class="row">
+  <input type="text" id="nodeIdIn" placeholder="Node ID or link">
+  <button id="useBtn" style="flex:none">Use</button>
+</div>
+
+<h3>Screenshot</h3>
+<div id="drop">Drop, click or paste image</div>
+<input type="file" id="file" accept="image/*" class="hidden">
+<div id="thumbRow" class="row">
+  <img id="thumb" alt="">
+  <div style="flex:1"><div id="shotInfo"></div></div>
+  <button id="replaceBtn">Replace</button>
+</div>
+
+<h3>Crop (system bars, pt)</h3>
+<div class="row">
+  <label>Status bar<input type="number" id="statusPt" min="0" step="1" value="47"></label>
+  <label>Nav bar<input type="number" id="navPt" min="0" step="1" value="34"></label>
+  <label>Preset
+    <select id="preset">
+      <option value="custom">Custom</option>
+      <option value="47,34" selected>iOS (notch) 47/34</option>
+      <option value="54,34">iOS (Dynamic Island) 54/34</option>
+      <option value="24,24">Android (gesture) 24/24</option>
+      <option value="24,48">Android (3-button) 24/48</option>
+      <option value="0,0">None 0/0</option>
+    </select>
+  </label>
+</div>
+<div class="row"><label class="inline"><input type="checkbox" id="dContains" checked> Design contains system bars</label></div>
+<div class="row hidden" id="dCropRow">
+  <label>Design top<input type="number" id="dTop" min="0" step="1" value="0"></label>
+  <label>Design bottom<input type="number" id="dBot" min="0" step="1" value="0"></label>
+</div>
+
+<details>
+  <summary>Settings</summary>
+  <div class="row">
+    <label>Threshold (0-1)<input type="number" id="threshold" min="0" max="1" step="0.01" value="0.1"></label>
+  </div>
+  <div class="row">
+    <label>Export scale
+      <select id="scale"><option>1</option><option selected>2</option><option>3</option></select>
+    </label>
+  </div>
+  <div class="row">
+    <label>Search range (pt)<input type="number" id="searchPt" min="0" step="1" value="48"></label>
+    <label>Match tolerance<input type="number" id="tol" min="0" max="100" step="1" value="25"></label>
+  </div>
+  <div class="row"><label class="inline"><input type="checkbox" id="aa" checked> Ignore anti-aliasing</label></div>
+  <div class="row"><label class="inline"><input type="checkbox" id="ignMedia" checked> Ignore image/video layers</label></div>
+</details>
+
+<button class="primary" id="compareBtn" disabled>Compare</button>
+<div id="status"></div>
+
+<div id="results" class="hidden">
+  <div class="card">
+    <div id="summary"></div>
+  </div>
+  <div class="row">
+    <button class="tab active" data-view="side">Side by side</button>
+    <button class="tab" data-view="overlay">Overlay</button>
+    <button class="tab" data-view="diff">Diff</button>
+    <input type="range" id="opacity" min="0" max="1" step="0.01" value="0.5" class="hidden" style="flex:1">
+  </div>
+  <div id="previewWrap"><canvas id="preview"></canvas></div>
+  <div id="regions"></div>
+  <div id="ignored" class="hidden"></div>
+  <div class="row" style="margin-top:8px;flex-wrap:wrap">
+    <button id="markBtn">Mark on Figma</button>
+    <button id="clearBtn">Clear marks</button>
+    <button id="pngBtn">Export PNG</button>
+    <button id="jsonBtn">Export JSON</button>
+  </div>
+</div>
+
+<!-- Pure logic: no DOM access, testable in node -->
+<script id="core">
+(function (root) {
+  'use strict';
+  var MAX_DELTA = 35215; // max YIQ delta
+  var MAX_REGIONS = 200;
+
+  function blend(c, a) { return 255 + (c - 255) * a; }
+  function rgb2y(r, g, b) { return r * 0.29889531 + g * 0.58662247 + b * 0.11448223; }
+  function rgb2i(r, g, b) { return r * 0.59597799 - g * 0.2741761 - b * 0.32180189; }
+  function rgb2q(r, g, b) { return r * 0.21147017 - g * 0.52261711 + b * 0.31114694; }
+
+  // Signed YIQ delta between pixel k of a and pixel m of b (pixelmatch style)
+  function colorDelta(a, b, k, m, yOnly) {
+    var r1 = a[k], g1 = a[k + 1], b1 = a[k + 2], a1 = a[k + 3];
+    var r2 = b[m], g2 = b[m + 1], b2 = b[m + 2], a2 = b[m + 3];
+    if (a1 === a2 && r1 === r2 && g1 === g2 && b1 === b2) return 0;
+    if (a1 < 255) { a1 /= 255; r1 = blend(r1, a1); g1 = blend(g1, a1); b1 = blend(b1, a1); }
+    if (a2 < 255) { a2 /= 255; r2 = blend(r2, a2); g2 = blend(g2, a2); b2 = blend(b2, a2); }
+    var y1 = rgb2y(r1, g1, b1), y2 = rgb2y(r2, g2, b2);
+    var y = y1 - y2;
+    if (yOnly) return y;
+    var i = rgb2i(r1, g1, b1) - rgb2i(r2, g2, b2);
+    var q = rgb2q(r1, g1, b1) - rgb2q(r2, g2, b2);
+    var d = 0.5053 * y * y + 0.299 * i * i + 0.1957 * q * q;
+    return y1 > y2 ? -d : d;
+  }
+
+  function sameRGBA(img, p, q) {
+    return img[p] === img[q] && img[p + 1] === img[q + 1] && img[p + 2] === img[q + 2] && img[p + 3] === img[q + 3];
+  }
+
+  function hasManySiblings(img, x1, y1, w, h) {
+    var x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0);
+    var x2 = Math.min(x1 + 1, w - 1), y2 = Math.min(y1 + 1, h - 1);
+    var pos = (y1 * w + x1) * 4;
+    var zeroes = (x1 === x0 || x1 === x2 || y1 === y0 || y1 === y2) ? 1 : 0;
+    for (var x = x0; x <= x2; x++) {
+      for (var y = y0; y <= y2; y++) {
+        if (x === x1 && y === y1) continue;
+        if (sameRGBA(img, pos, (y * w + x) * 4)) zeroes++;
+        if (zeroes > 2) return true;
+      }
+    }
+    return false;
+  }
+
+  // Simplified pixelmatch anti-aliasing heuristic
+  function antialiased(img, x1, y1, w, h, img2) {
+    var x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0);
+    var x2 = Math.min(x1 + 1, w - 1), y2 = Math.min(y1 + 1, h - 1);
+    var pos = (y1 * w + x1) * 4;
+    var zeroes = (x1 === x0 || x1 === x2 || y1 === y0 || y1 === y2) ? 1 : 0;
+    var min = 0, max = 0, minX = 0, minY = 0, maxX = 0, maxY = 0;
+    for (var x = x0; x <= x2; x++) {
+      for (var y = y0; y <= y2; y++) {
+        if (x === x1 && y === y1) continue;
+        var d = colorDelta(img, img, pos, (y * w + x) * 4, true);
+        if (d === 0) { zeroes++; if (zeroes > 2) return false; }
+        else if (d < min) { min = d; minX = x; minY = y; }
+        else if (d > max) { max = d; maxX = x; maxY = y; }
+      }
+    }
+    if (min === 0 || max === 0) return false;
+    return (hasManySiblings(img, minX, minY, w, h) && hasManySiblings(img2, minX, minY, w, h)) ||
+           (hasManySiblings(img, maxX, maxY, w, h) && hasManySiblings(img2, maxX, maxY, w, h));
+  }
+
+  // A = design, B = screenshot ({width,height,data}), same size.
+  function pixelDiff(A, B, opts) {
+    var w = A.width, h = A.height, a = A.data, b = B.data;
+    var t = opts.threshold, useAA = opts.antialias !== false;
+    var maxD = MAX_DELTA * t * t;
+    var out = new Uint8ClampedArray(w * h * 4);
+    var changed = new Uint8Array(w * h);
+    var diffCount = 0, aaCount = 0, ign = opts.ignoreMask || null;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var idx = y * w + x, pos = idx * 4;
+        if (ign && ign[idx]) {
+          out[pos] = 220; out[pos + 1] = 235; out[pos + 2] = 255; out[pos + 3] = 255;
+          continue;
+        }
+        var d = colorDelta(a, b, pos, pos, false);
+        var r, g, bl;
+        if (Math.abs(d) > maxD) {
+          if (useAA && (antialiased(a, x, y, w, h, b) || antialiased(b, x, y, w, h, a))) {
+            r = 255; g = 255; bl = 0; aaCount++;
+          } else {
+            r = 255; g = 0; bl = 0; changed[idx] = 1; diffCount++;
+          }
+        } else {
+          var al = a[pos + 3] / 255;
+          var v = blend(rgb2y(blend(a[pos], al), blend(a[pos + 1], al), blend(a[pos + 2], al)), 0.1);
+          r = g = bl = v;
+        }
+        out[pos] = r; out[pos + 1] = g; out[pos + 2] = bl; out[pos + 3] = 255;
+      }
+    }
+    return { diffImage: { width: w, height: h, data: out }, changed: changed, diffCount: diffCount, aaCount: aaCount };
+  }
+
+  function diffEvidence(diff, box, layout, padding) {
+    var S = layout.scale, W = layout.W, H = layout.H;
+    var left = Math.max(0, Math.floor((box.x - padding) * S));
+    var top = Math.max(0, Math.floor((box.y - layout.designTopPt - padding) * S));
+    var right = Math.min(W, Math.ceil((box.x + box.w + padding) * S));
+    var bottom = Math.min(H, Math.ceil((box.y + box.h - layout.designTopPt + padding) * S));
+    var count = 0, x0 = right, y0 = bottom, x1 = left, y1 = top;
+    for (var y = top; y < bottom; y++) {
+      for (var x = left; x < right; x++) {
+        if (!diff.changed[y * W + x]) continue;
+        count++;
+        x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1);
+      }
+    }
+    if (count < 3 * S * S) return null;
+    return { x: x0 / S, y: y0 / S + layout.designTopPt, w: (x1 - x0) / S, h: (y1 - y0) / S };
+  }
+
+  function confirmLayoutIssues(issues, diff, layout) {
+    var confirmed = [];
+    issues.forEach(function (issue) {
+      if (issue.kind !== 'content') {
+        var actual = diffEvidence(diff, issue.actualBox, layout, issue.kind === 'spacing' ? 2 : 0);
+        var evidence = actual || diffEvidence(diff, issue, layout, 2);
+        if (!evidence) return;
+        issue.diffBox = evidence;
+        if (actual && issue.kind === 'size') issue.actualDiffBox = actual;
+      }
+      issue.index = confirmed.length + 1;
+      confirmed.push(issue);
+    });
+    return confirmed;
+  }
+
+  function computeLayout(p) {
+    var S = p.scale;
+    var k = p.shotW / p.designW;              // device scale factor
+    var shotScale = S / k;
+    var W = Math.round(p.designW * S);
+    var shotScaledH = Math.round(p.shotH * shotScale);
+    var designPxH = p.designPxH || Math.round(p.designH * S);
+    var sTop = Math.round(p.shotTopPt * S), sBot = Math.round(p.shotBotPt * S);
+    var dTop = Math.round(p.designTopPt * S), dBot = Math.round(p.designBotPt * S);
+    var Hs = Math.max(0, shotScaledH - sTop - sBot);
+    var Hd = Math.max(0, designPxH - dTop - dBot);
+    return {
+      k: k, scale: S, W: W, H: Math.min(Hd, Hs), Hd: Hd, Hs: Hs,
+      shotScaledH: shotScaledH, designPxH: designPxH,
+      shotTop: sTop, designTop: dTop,
+      designTopPt: p.designTopPt,
+      heightMismatch: Math.abs(Hd - Hs) > S
+    };
+  }
+
+  // ---- layer comparison ----
+  var VECTOR_TYPES = ['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'LINE', 'ELLIPSE', 'POLYGON', 'RECTANGLE'];
+
+  // children are parents-first, so one pass propagates ignore to descendants
+  function effectiveIgnored(children, ignoreSet, ignoreMedia) {
+    var out = new Set();
+    for (var i = 0; i < children.length; i++) {
+      var c = children[i];
+      if ((ignoreSet && ignoreSet.has(c.id)) || (c.parentId && out.has(c.parentId)) || (ignoreMedia && c.media)) {
+        out.add(c.id);
+      }
+    }
+    return out;
+  }
+
+  function fillBox(mask, W, H, c, S, topPt, v) {
+    var x0 = Math.max(0, Math.round(c.x * S)), y0 = Math.max(0, Math.round((c.y - topPt) * S));
+    var x1 = Math.min(W, Math.round((c.x + c.w) * S)), y1 = Math.min(H, Math.round((c.y + c.h - topPt) * S));
+    for (var y = y0; y < y1; y++) for (var x = x0; x < x1; x++) mask[y * W + x] = v;
+  }
+
+  // 1 = ignore. Ignored painting nodes mark their box, later opaque/text/vector nodes unmark it.
+  function buildIgnoreMask(children, ignored, W, H, S, designTopPt) {
+    var mask = new Uint8Array(W * H);
+    for (var i = 0; i < children.length; i++) {
+      var c = children[i];
+      if (ignored.has(c.id)) {
+        if (c.paints) fillBox(mask, W, H, c, S, designTopPt, 1);
+      } else if (c.opaque || c.type === 'TEXT' || (VECTOR_TYPES.indexOf(c.type) >= 0 && c.type !== 'RECTANGLE')) {
+        fillBox(mask, W, H, c, S, designTopPt, 0);
+      }
+    }
+    return mask;
+  }
+
+  // RGBA image -> grayscale at 1pt resolution (S x S blocks averaged, alpha over white)
+  function toGray(img, S) {
+    var w1 = Math.floor(img.width / S), h1 = Math.floor(img.height / S);
+    var g = new Float32Array(w1 * h1), d = img.data, n = S * S;
+    var y, x;
+    for (y = 0; y < h1; y++) {
+      for (x = 0; x < w1; x++) {
+        var sum = 0;
+        for (var yy = 0; yy < S; yy++) {
+          for (var xx = 0; xx < S; xx++) {
+            var p = ((y * S + yy) * img.width + x * S + xx) * 4, al = d[p + 3] / 255;
+            sum += 0.299 * blend(d[p], al) + 0.587 * blend(d[p + 1], al) + 0.114 * blend(d[p + 2], al);
+          }
+        }
+        g[y * w1 + x] = sum / n;
+      }
+    }
+    // 3x3 box blur: tolerate sub-pt rendering differences (fonts, JPEG, resampling)
+    var b = new Float32Array(w1 * h1);
+    for (y = 0; y < h1; y++) {
+      for (x = 0; x < w1; x++) {
+        var t = 0, k = 0;
+        for (var oy = -1; oy <= 1; oy++) {
+          for (var ox = -1; ox <= 1; ox++) {
+            var X = x + ox, Y = y + oy;
+            if (X >= 0 && Y >= 0 && X < w1 && Y < h1) { t += g[Y * w1 + X]; k++; }
+          }
+        }
+        b[y * w1 + x] = t / k;
+      }
+    }
+    return { w: w1, h: h1, g: b };
+  }
+
+  // Shape score 0..100 = (1 - NCC) * 100, plus mean brightness gap. Robust to tint/translucency.
+  function nccScore(P, Q, px, py, pw, ph, qx, qy, step) {
+    var n = 0, sp = 0, sq = 0, spp = 0, sqq = 0, spq = 0;
+    for (var y = 0; y < ph; y += step) {
+      var pi = (py + y) * P.w + px, qi = (qy + y) * Q.w + qx;
+      for (var x = 0; x < pw; x += step) {
+        var a = P.g[pi + x], c = Q.g[qi + x];
+        sp += a; sq += c; spp += a * a; sqq += c * c; spq += a * c; n++;
+      }
+    }
+    var vp = spp - sp * sp / n, vq = sqq - sq * sq / n;
+    var ncc = (vp <= 0 || vq <= 0) ? 0 : (spq - sp * sq / n) / Math.sqrt(vp * vq);
+    return { s: (1 - ncc) * 100, gap: Math.abs(sp - sq) / n };
+  }
+
+  function patchStd(P, bx) {
+    var n = bx.w * bx.h, s = 0, s2 = 0;
+    for (var y = bx.y; y < bx.y + bx.h; y++) {
+      for (var x = bx.x; x < bx.x + bx.w; x++) { var v = P.g[y * P.w + x]; s += v; s2 += v * v; }
+    }
+    var m = s / n;
+    return Math.sqrt(Math.max(0, s2 / n - m * m));
+  }
+
+  function fitsAt(Q, bx, dx, dy) {
+    return bx.x + dx >= 0 && bx.y + dy >= 0 && bx.x + dx + bx.w <= Q.w && bx.y + dy + bx.h <= Q.h;
+  }
+
+  // Best offset among positions (list of [dx,dy]); tie-break toward center. null when nothing fits.
+  function scan(P, Q, bx, positions, step, center) {
+    var best = Infinity, cand = [];
+    for (var i = 0; i < positions.length; i++) {
+      var dx = positions[i][0], dy = positions[i][1];
+      if (!fitsAt(Q, bx, dx, dy)) continue;
+      var r = nccScore(P, Q, bx.x, bx.y, bx.w, bx.h, bx.x + dx, bx.y + dy, step);
+      var s = r.s;
+      cand.push({ dx: dx, dy: dy, s: s, gap: r.gap });
+      if (s < best) best = s;
+    }
+    var pick = null, pd = Infinity;
+    for (var j = 0; j < cand.length; j++) {
+      if (cand[j].s > best + 1) continue;
+      var dist = Math.abs(cand[j].dx - center.dx) + Math.abs(cand[j].dy - center.dy);
+      if (dist < pd || (dist === pd && cand[j].s < pick.s)) { pd = dist; pick = cand[j]; }
+    }
+    return pick;
+  }
+
+  function grid(cx, cy, rx, ry, step) {
+    var out = [];
+    for (var dy = cy - ry; dy <= cy + ry; dy += step) {
+      for (var dx = cx - rx; dx <= cx + rx; dx += step) out.push([dx, dy]);
+    }
+    return out;
+  }
+
+  function classifyLayers(children, byId) {
+    var roles = {}, excluded = {}, boundaries = new Set();
+    var data = /(?:^|[\s_/.-])(?:list|data[- _]?row|table|cell|repeater|collection|beneficiary[- _]?row|danh sách|dòng dữ liệu)(?:$|[\s_/.-])/i;
+    var heading = /\b(?:title|heading|headline)\b|tiêu đề/i;
+    var secondary = /\b(?:subtitle|description|caption|helper|footnote|placeholder|body|metadata|supporting|secondary)\b|mô tả|chú thích/i;
+    var button = /\b(?:button|btn|cta)\b|nút/i;
+    var icon = /\b(?:icon|glyph|pictogram|shortcut)\b|biểu tượng/i;
+    var rowGroups = new Map(), repeatedRows = new Set();
+    children.forEach(function (c) {
+      if (!c.parentId || c.h < 20 || c.w < c.h * 2 ||
+          !/^(INSTANCE|FRAME|COMPONENT|GROUP)$/.test(c.type) || button.test(c.name)) return;
+      var name = c.name.replace(/[ _-]*\d+$/, '').toLowerCase();
+      var key = JSON.stringify([c.parentId, name, Math.round(c.x), Math.round(c.w), Math.round(c.h)]);
+      if (!rowGroups.has(key)) rowGroups.set(key, []);
+      rowGroups.get(key).push(c);
+    });
+    rowGroups.forEach(function (rows) {
+      if (rows.length < 3) return;
+      rows.sort(function (a, b) { return a.y - b.y; });
+      if (rows.every(function (r, i) { return i === 0 || r.y >= rows[i - 1].y + rows[i - 1].h; })) {
+        rows.forEach(function (r) { repeatedRows.add(r.id); });
+      }
+    });
+    children.forEach(function (c) {
+      // A section header can be a sibling of the data container even when both share a card.
+      var dataContainer = c.type !== 'TEXT' && data.test(c.name) && !heading.test(c.name);
+      excluded[c.id] = !!excluded[c.parentId] || repeatedRows.has(c.id) || dataContainer;
+      if (dataContainer && c.opaque && !excluded[c.parentId] && !repeatedRows.has(c.id)) boundaries.add(c.id);
+      if (excluded[c.id]) return;
+      if (c.type !== 'TEXT') {
+        if (button.test(c.name)) roles[c.id] = 'button';
+        else if (icon.test(c.name) || (VECTOR_TYPES.indexOf(c.type) >= 0 && c.type !== 'RECTANGLE' && c.w <= 64 && c.h <= 64)) roles[c.id] = 'icon';
+        return;
+      }
+      var p = byId[c.parentId], control = false;
+      while (p) {
+        if (button.test(p.name) || icon.test(p.name)) { control = true; break; }
+        p = byId[p.parentId];
+      }
+      if (!secondary.test(c.name) && c.text && (heading.test(c.name) || control ||
+          (c.fontSize >= 16 && (c.fontWeight >= 600 || /bold|semibold/i.test(c.fontStyle || '')) && c.text.length <= 55))) {
+        roles[c.id] = 'title';
+      }
+    });
+    return { roles: roles, excluded: excluded, boundaries: boundaries };
+  }
+
+  function spacingIssues(results, byId) {
+    var out = [];
+    var ancestors = new Map();
+    results.forEach(function (r) {
+      var ids = new Set(), parent = byId[r.parentId];
+      while (parent) {
+        ids.add(parent.id);
+        parent = byId[parent.parentId];
+      }
+      ancestors.set(r.id, ids);
+    });
+    ['y', 'x'].forEach(function (axis) {
+      var other = axis === 'x' ? 'y' : 'x';
+      var size = axis === 'x' ? 'w' : 'h', crossSize = axis === 'x' ? 'h' : 'w';
+      var offset = 'd' + axis, crossOffset = 'd' + other;
+      var ordered = results.slice().sort(function (a, b) {
+        return a[axis] - b[axis] || a[other] - b[other] || b.w * b.h - a.w * a.h;
+      });
+      ordered.forEach(function (a) {
+        if (a.topBoundaryOnly) return;
+        var best = null, gap = Infinity;
+        results.forEach(function (b) {
+          if (a === b || ancestors.get(a.id).has(b.id) || ancestors.get(b.id).has(a.id)) return;
+          if (axis === 'x' && b.topBoundaryOnly) return;
+          var overlap = Math.min(a[other] + a[crossSize], b[other] + b[crossSize]) - Math.max(a[other], b[other]);
+          var distance = b[axis] - (a[axis] + a[size]);
+          if (overlap < Math.min(a[crossSize], b[crossSize]) * 0.25 || distance < 0 || distance > gap) return;
+          if (distance === gap) {
+            if (ancestors.get(b.id).has(best.id)) return;
+            if (!ancestors.get(best.id).has(b.id) && (best.parentId === a.parentId || b.parentId !== a.parentId)) return;
+          }
+          gap = distance;
+          best = b;
+        });
+        if (!best) return;
+        var start = a[axis] + a[offset] + a['actual' + size.toUpperCase()];
+        var end = best[axis] + best[offset];
+        // A reversed or coincident match may be two templates matching the same UI element.
+        if (end + best['actual' + size.toUpperCase()] / 2 <= start - a['actual' + size.toUpperCase()] / 2) return;
+        var actualGap = end - start;
+        if (Math.abs(actualGap - gap) <= 3) return;
+        var crossStart = Math.max(a[other] + a[crossOffset], best[other] + best[crossOffset]);
+        var crossEnd = Math.min(a[other] + a[crossOffset] + a['actual' + crossSize.toUpperCase()],
+          best[other] + best[crossOffset] + best['actual' + crossSize.toUpperCase()]);
+        if (crossEnd <= crossStart) return;
+        var box = {}, design = {};
+        box[axis] = Math.min(start, end);
+        box[size] = Math.max(1, Math.abs(actualGap));
+        box[other] = crossStart;
+        box[crossSize] = crossEnd - crossStart;
+        design[axis] = a[axis] + a[size];
+        design[size] = Math.max(1, gap);
+        design[other] = Math.max(a[other], best[other]);
+        design[crossSize] = Math.min(a[other] + a[crossSize], best[other] + best[crossSize]) - design[other];
+        var duplicate = out.some(function (issue) {
+          if (issue.axis !== axis) return false;
+          var existing = issue.actualBox;
+          var overlap = Math.min(existing[other] + existing[crossSize], box[other] + box[crossSize]) -
+            Math.max(existing[other], box[other]);
+          return overlap >= Math.min(existing[crossSize], box[crossSize]) * 0.5 &&
+            Math.abs(existing[axis] - box[axis]) <= 3 &&
+            Math.abs(existing[size] - box[size]) <= 3;
+        });
+        if (duplicate) return;
+        // Keep the overlap for measurement and expand only the visible highlight.
+        var highlight = Object.assign({}, box);
+        highlight[other] = Math.min(a[other] + a[crossOffset], best[other] + best[crossOffset]);
+        highlight[crossSize] = Math.max(a[other] + a[crossOffset] + a['actual' + crossSize.toUpperCase()],
+          best[other] + best[crossOffset] + best['actual' + crossSize.toUpperCase()]) - highlight[other];
+        out.push(Object.assign(design, {
+          kind: 'spacing', axis: axis, actualBox: box, highlightBox: highlight, designGap: gap, actualGap: actualGap,
+          nodeId: best.id, nodeName: a.name + ' ↔ ' + best.name, nodeType: 'GAP', label: a.name + ' ↔ ' + best.name
+        }));
+      });
+    });
+    return out;
+  }
+
+  // Compare scaled templates in a small area around the initial match.
+  function scaledMatch(P, Q, bx, match, role) {
+    var best = { x: bx.x + match.dx, y: bx.y + match.dy, w: bx.w, h: bx.h, score: match.s };
+    var step = Math.max(1, Math.ceil(Math.sqrt(bx.w * bx.h / 400)));
+    var scales = [0.65, 0.75, 0.85, 0.92, 1, 1.08, 1.15, 1.25, 1.4, 1.55];
+    scales.forEach(function (sx) {
+      (role === 'button' ? scales : [sx]).forEach(function (sy) {
+        if (sx === 1 && sy === 1) return;
+        var w = Math.round(bx.w * sx), h = Math.round(bx.h * sy);
+        if (w < 4 || h < 4) return;
+        var anchors = role === 'button' ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.65, 0.8, 1];
+        anchors.forEach(function (ax) {
+          anchors.forEach(function (ay) {
+            var x = Math.round(bx.x + match.dx + (bx.w - w) * ax);
+            var y = Math.round(bx.y + match.dy + (bx.h - h) * ay);
+            if (!fitsAt(Q, { x: x, y: y, w: w, h: h }, 0, 0)) return;
+            var n = 0, sp = 0, sq = 0, pp = 0, qq = 0, pq = 0;
+            for (var j = 0; j < bx.h; j += step) {
+              for (var i = 0; i < bx.w; i += step) {
+                var p = P.g[(bx.y + j) * P.w + bx.x + i];
+                var qx = Math.max(0, Math.min(w - 1, (i + 0.5) * w / bx.w - 0.5));
+                var qy = Math.max(0, Math.min(h - 1, (j + 0.5) * h / bx.h - 0.5));
+                var ix = Math.floor(qx), iy = Math.floor(qy), tx = qx - ix, ty = qy - iy;
+                var q0 = (y + iy) * Q.w + x + ix;
+                var q1 = q0 + (iy + 1 < h ? Q.w : 0);
+                var right = ix + 1 < w ? 1 : 0;
+                var q = ((1 - tx) * Q.g[q0] + tx * Q.g[q0 + right]) * (1 - ty) +
+                  ((1 - tx) * Q.g[q1] + tx * Q.g[q1 + right]) * ty;
+                sp += p; sq += q; pp += p * p; qq += q * q; pq += p * q; n++;
+              }
+            }
+            var vp = pp - sp * sp / n, vq = qq - sq * sq / n;
+            if (vp <= 0 || vq <= 0) return;
+            var score = (1 - (pq - sp * sq / n) / Math.sqrt(vp * vq)) * 100;
+            if (score < best.score) best = { x: x, y: y, w: w, h: h, score: score };
+          });
+        });
+      });
+    });
+    return best;
+  }
+
+  function textInk(image, box) {
+    var edge = [], ink = 0, strong = 0, n = box.w * box.h;
+    for (var x = 0; x < box.w; x++) {
+      edge.push(image.g[box.y * image.w + box.x + x]);
+      edge.push(image.g[(box.y + box.h - 1) * image.w + box.x + x]);
+    }
+    edge.sort(function (a, b) { return a - b; });
+    var background = edge[Math.floor(edge.length / 2)];
+    for (var y = 0; y < box.h; y++) {
+      for (var x = 0; x < box.w; x++) {
+        var contrast = Math.abs(image.g[(box.y + y) * image.w + box.x + x] - background);
+        if (contrast >= 18) ink++;
+        if (contrast >= 45) strong++;
+      }
+    }
+    return { density: ink / n, strong: strong / n };
+  }
+
+  function iconColorChanged(D, Sh, design, actual, scale) {
+    var changed = 0;
+    for (var y = 0; y < design.h; y++) {
+      for (var x = 0; x < design.w; x++) {
+        var d = (((design.y + y) * scale) * D.width + (design.x + x) * scale) * 4;
+        var s = (((actual.y + y) * scale) * Sh.width + (actual.x + x) * scale) * 4;
+        if (Math.abs(colorDelta(D.data, Sh.data, d, s, false)) > MAX_DELTA * 0.15 * 0.15) changed++;
+      }
+    }
+    return changed >= Math.max(4, design.w * design.h * 0.12);
+  }
+
+  // Match visible UI elements against the screenshot at design resolution.
+  function layerCompare(D, Sh, ctx) {
+    var S = ctx.scale, top = ctx.designTopPt, children = ctx.children, ignored = ctx.ignored;
+    var searchPt = ctx.searchPt === undefined ? 48 : ctx.searchPt;
+    var tol = ctx.tolerance === undefined ? 25 : ctx.tolerance;
+    var Gd = toGray(D, S), Gs = toGray(Sh, S);
+    var byId = {}, results = [], issues = [], resMap = {};
+    children.forEach(function (c) { byId[c.id] = c; });
+    var roles = ctx.roles;
+    var containers = /^(FRAME|GROUP|INSTANCE|COMPONENT)$/;
+
+    children.forEach(function (c) {
+      // Spacing is geometric. Unnamed painted layers can provide anchors
+      // without becoming candidates for a content or size finding.
+      var boundary = ctx.boundaries && ctx.boundaries.has(c.id);
+      var role = roles[c.id] || (c.type !== 'TEXT' && (c.paints || containers.test(c.type)) ? 'layout' : null);
+      if (!role || (ignored.has(c.id) && !boundary) || c.w < 6 || c.h < 6) return;
+      var bx = { x: Math.round(c.x), y: Math.round(c.y - top), w: Math.round(c.w), h: Math.round(c.h) };
+      if (!fitsAt(Gd, bx, 0, 0) || (!boundary && bx.w * bx.h > 0.6 * Gd.w * Gd.h)) return;
+      var sample = bx;
+      if (boundary) {
+        var start = Math.max(0, bx.y - 4);
+        sample = { x: bx.x, y: start, w: bx.w, h: Math.min(bx.y + 6, Gd.h) - start };
+      } else if (patchStd(Gd, sample) < 4 && role !== 'title') {
+        var left = Math.max(0, bx.x - 3), upper = Math.max(0, bx.y - 3);
+        sample = {
+          x: left, y: upper, w: Math.min(Gd.w, bx.x + bx.w + 3) - left,
+          h: Math.min(Gd.h, bx.y + bx.h + 3) - upper
+        };
+      }
+      if (patchStd(Gd, sample) < 4) return;
+
+      var parent = byId[c.parentId];
+      while (parent && !resMap[parent.id]) {
+        if (role === 'icon' && roles[parent.id] === 'icon') return;
+        parent = byId[parent.parentId];
+      }
+      if (parent && role === 'icon' && roles[parent.id] === 'icon') return;
+      var ref = parent && resMap[parent.id];
+      var center = ref ? { dx: ref.dx, dy: ref.dy } : { dx: 0, dy: 0 };
+      var coarse = scan(Gd, Gs, sample, grid(center.dx, center.dy, searchPt, searchPt, 3), 3, center);
+      if (!coarse) return;
+      var found = scan(Gd, Gs, sample, grid(coarse.dx, coarse.dy, 2, 2, 1), 1, center);
+      if (!found) return;
+      var originalMatch = { x: bx.x + found.dx, y: bx.y + found.dy, w: bx.w, h: bx.h, score: found.s };
+      var actual = found.s > 2 && role !== 'layout' && sample === bx ? scaledMatch(Gd, Gs, bx, found, role) : originalMatch;
+      var scaled = actual.score + 0.5 < found.s * 0.85 && actual.score <= Math.min(24, tol);
+      if (!scaled) actual = originalMatch;
+
+      var result = {
+        id: c.id, name: c.name, parentId: c.parentId, nodeId: c.id, nodeName: c.name, nodeType: c.type,
+        label: role === 'title' ? c.text : c.name, x: c.x, y: c.y, w: c.w, h: c.h,
+        dx: actual.x - bx.x, dy: actual.y - bx.y,
+        actualW: scaled ? actual.w : c.w, actualH: scaled ? actual.h : c.h, score: actual.score,
+        topBoundaryOnly: boundary, role: role
+      };
+      var metric = null;
+      var fontWeight = c.fontWeight || c.fontStyle;
+      if (scaled && (Math.abs(actual.h - bx.h) >= 2 || Math.abs(actual.w - bx.w) >= 2)) {
+        if (role === 'title' && c.fontSize && Math.abs(actual.h - bx.h) >= 2) metric = 'fontSize';
+        else if (role !== 'title') metric = 'dimensions';
+      }
+      var content = false;
+      if (role === 'title' && !scaled) {
+        var originalInk = textInk(Gd, bx);
+        var visible = textInk(Gs, actual);
+        var enoughInk = originalInk.density >= 0.05 && visible.density >= originalInk.density * 0.55 &&
+          visible.density <= originalInk.density * 1.8 && visible.strong >= 0.02;
+        var ratio = visible.strong / originalInk.strong;
+        if (fontWeight && actual.score <= Math.min(15, tol) && enoughInk && originalInk.strong >= 0.05 &&
+            (ratio >= 1.2 || ratio <= 0.83)) metric = 'fontWeight';
+
+        // For a weak content match require visible text at the expected anchor.
+        // An empty patch or a distant lookalike is insufficient evidence.
+        var anchor = { x: bx.x + center.dx, y: bx.y + center.dy, w: bx.w, h: bx.h };
+        if (!metric && actual.score > Math.max(30, tol) && fitsAt(Gs, anchor, 0, 0)) {
+          var anchorInk = textInk(Gs, anchor);
+          content = originalInk.density >= 0.05 && anchorInk.density >= originalInk.density * 0.65 &&
+            anchorInk.density <= originalInk.density * 1.6 && anchorInk.strong >= 0.025;
+          if (content) { result.dx = center.dx; result.dy = center.dy; }
+        }
+      }
+      var iconUI = false;
+      if (role === 'icon' && !metric && !scaled && sample === bx) {
+        if (actual.score <= tol) {
+          iconUI = iconColorChanged(D, Sh, bx, actual, S);
+        } else {
+          var iconAnchor = { x: bx.x + center.dx, y: bx.y + center.dy, w: bx.w, h: bx.h };
+          if (fitsAt(Gs, iconAnchor, 0, 0) && patchStd(Gs, iconAnchor) >= Math.max(8, patchStd(Gd, bx) * 0.45)) {
+            iconUI = true;
+            result.dx = center.dx;
+            result.dy = center.dy;
+          }
+        }
+      }
+      if (actual.score <= tol && (scaled || found.gap <= 30)) {
+        results.push(result);
+        resMap[c.id] = result;
+      }
+      if (metric || content || iconUI) {
+        issues.push(Object.assign({}, result, {
+          kind: metric ? 'size' : iconUI ? 'icon' : 'content', metric: metric, fontSize: c.fontSize, fontWeight: fontWeight,
+          actualBox: { x: c.x + result.dx, y: c.y + result.dy, w: result.actualW, h: result.actualH }
+        }));
+      }
+    });
+
+    issues.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+    issues = spacingIssues(results.filter(function (r) { return r.role !== 'icon'; }), byId).concat(issues);
+    issues.forEach(function (o, n) { o.index = n + 1; });
+    return { issues: issues };
+  }
+
+  root.DiffCore = {
+    colorDelta: colorDelta, antialiased: antialiased, pixelDiff: pixelDiff, confirmLayoutIssues: confirmLayoutIssues,
+    computeLayout: computeLayout,
+    effectiveIgnored: effectiveIgnored, buildIgnoreMask: buildIgnoreMask, classifyLayers: classifyLayers, layerCompare: layerCompare
+  };
+})(typeof window !== 'undefined' ? window : this);
+</script>
+
+<script id="ui">
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { node: null, shot: null, res: null, base: null, ignoreIds: [], ignoreNames: {},
+                view: 'side', hover: -1, busy: false };
+  var pending = null;
+
+  function post(msg) {
+    try { if (window.parent && window.parent !== window) window.parent.postMessage({ pluginMessage: msg }, '*'); }
+    catch (e) { /* standalone */ }
+  }
+  function request(msg, replyType) {
+    return new Promise(function (resolve, reject) {
+      pending = { type: replyType, resolve: resolve, reject: reject };
+      post(msg);
+    });
+  }
+  function setStatus(t, err) { var s = $('status'); s.textContent = t || ''; s.className = err ? 'err' : ''; }
+  function num(id, def) { var v = parseFloat($(id).value); return isNaN(v) ? (def || 0) : v; }
+
+  window.onmessage = function (e) {
+    var m = e.data && e.data.pluginMessage;
+    if (!m) return;
+    if (m.type === 'target') {
+      state.node = m.node;
+      $('nodeInfo').textContent = m.node
+        ? m.node.name + ' · ' + m.node.type + ' · ' + Math.round(m.node.width) + '×' + Math.round(m.node.height)
+        : 'Select a frame';
+      updateCompare();
+    } else if (m.type === 'error') {
+      if (pending) { var p = pending; pending = null; p.reject(new Error(m.message)); }
+      else setStatus(m.message, true);
+    } else if (m.type === 'cleared') {
+      setStatus('Markers cleared');
+    } else if (pending && m.type === pending.type) {
+      var q = pending; pending = null; q.resolve(m);
+    }
+  };
+
+  function updateCompare() { $('compareBtn').disabled = !(state.node && state.shot) || state.busy; }
+
+  // ---- target ----
+  $('useBtn').onclick = function () {
+    var v = $('nodeIdIn').value.trim();
+    if (v) post({ type: 'set-node-id', value: v });
+  };
+  $('nodeIdIn').onkeydown = function (e) { if (e.key === 'Enter') $('useBtn').click(); };
+
+  // ---- screenshot ----
+  function loadImage(blob) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(blob), img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error('Cannot decode image')); };
+      img.src = url;
+    });
+  }
+  function setShot(file) {
+    if (!file || !/^image\//.test(file.type)) return;
+    loadImage(file).then(function (img) {
+      state.shot = { img: img, w: img.naturalWidth, h: img.naturalHeight, name: file.name || 'clipboard' };
+      $('thumb').src = img.src;
+      $('shotInfo').textContent = state.shot.w + '×' + state.shot.h + ' px';
+      $('thumbRow').style.display = 'flex';
+      $('drop').classList.add('hidden');
+      updateCompare();
+    }).catch(function (e) { setStatus(e.message, true); });
+  }
+  $('drop').onclick = $('replaceBtn').onclick = function () { $('file').click(); };
+  $('file').onchange = function () { setShot($('file').files[0]); $('file').value = ''; };
+  ['dragover', 'dragenter'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); $('drop').classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); $('drop').classList.remove('over'); });
+  });
+  document.addEventListener('drop', function (e) { setShot(e.dataTransfer && e.dataTransfer.files[0]); });
+  window.addEventListener('paste', function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image/') === 0) { setShot(items[i].getAsFile()); break; }
+    }
+  });
+
+  // ---- crop ----
+  $('preset').onchange = function () {
+    var v = $('preset').value;
+    if (v === 'custom') return;
+    var p = v.split(',');
+    $('statusPt').value = p[0]; $('navPt').value = p[1];
+  };
+  ['statusPt', 'navPt'].forEach(function (id) {
+    $(id).oninput = function () { $('preset').value = 'custom'; };
+  });
+  $('dContains').onchange = function () { $('dCropRow').classList.toggle('hidden', $('dContains').checked); };
+
+  function getCrop() {
+    var st = num('statusPt'), nv = num('navPt'), same = $('dContains').checked;
+    return { shotTop: st, shotBot: nv, designTop: same ? st : num('dTop'), designBot: same ? nv : num('dBot') };
+  }
+  function getSettings() {
+    return { threshold: Math.min(1, Math.max(0, num('threshold', 0.1))), antialias: $('aa').checked,
+             scale: parseInt($('scale').value, 10) || 2,
+             searchPt: num('searchPt', 48), tolerance: num('tol', 25), ignoreMedia: $('ignMedia').checked };
+  }
+
+  // ---- compare ----
+  function canvasOf(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+  function imgData(cv) { var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height); return { width: d.width, height: d.height, data: d.data }; }
+
+  async function compare() {
+    state.busy = true; updateCompare(); setStatus('Comparing…');
+    await new Promise(function (r) { setTimeout(r); });
+    try {
+      var o = getSettings(), S = o.scale, crop = getCrop();
+      var exp = await request({ type: 'export', scale: S }, 'exported');
+      var dImg = await loadImage(new Blob([exp.bytes], { type: 'image/png' }));
+      var shot = state.shot;
+      var L = DiffCore.computeLayout({
+        designW: exp.node.width, designH: exp.node.height, designPxH: dImg.naturalHeight,
+        shotW: shot.w, shotH: shot.h, scale: S,
+        shotTopPt: crop.shotTop, shotBotPt: crop.shotBot, designTopPt: crop.designTop, designBotPt: crop.designBot
+      });
+      if (L.H <= 0) throw new Error('Nothing left to compare after crop');
+      var fullD = canvasOf(L.W, L.Hd), fullS = canvasOf(L.W, L.Hs), ctx;
+      ctx = fullD.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(dImg, 0, -L.designTop, L.W, L.designPxH);
+      ctx = fullS.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(shot.img, 0, -L.shotTop, L.W, L.shotScaledH);
+      var designCv = canvasOf(L.W, L.H), shotCv = canvasOf(L.W, L.H);
+      designCv.getContext('2d').drawImage(fullD, 0, 0);
+      shotCv.getContext('2d').drawImage(fullS, 0, 0);
+
+      state.ignoreIds = (exp.ignoreIds || []).slice();
+      state.ignoreNames = {};
+      exp.children.forEach(function (c) { state.ignoreNames[c.id] = c.name; });
+      state.base = {
+        exp: exp, L: L, o: o, crop: crop, shot: shot, fullD: fullD, fullS: fullS, designCv: designCv, shotCv: shotCv,
+        dData: imgData(designCv), sData: imgData(shotCv)
+      };
+      analyze();
+      setStatus('');
+    } catch (e) {
+      setStatus(e.message || String(e), true);
+    } finally {
+      state.busy = false; updateCompare();
+    }
+  }
+  $('compareBtn').onclick = compare;
+
+  // Everything that depends on the ignore list; reuses the exported images
+  function analyze() {
+    var b = state.base;
+    if (!b) return;
+    var L = b.L, o = b.o, S = o.scale, children = b.exp.children;
+    var ignored = DiffCore.effectiveIgnored(children, new Set(state.ignoreIds), o.ignoreMedia);
+    var byId = {};
+    children.forEach(function (c) { byId[c.id] = c; });
+    var classification = DiffCore.classifyLayers(children, byId);
+    ignored.forEach(function (id) { classification.boundaries.delete(id); });
+    children.forEach(function (c) { if (classification.excluded[c.id]) ignored.add(c.id); });
+    var mask = DiffCore.buildIgnoreMask(children, ignored, L.W, L.H, S, L.designTopPt);
+    var diff = DiffCore.pixelDiff(b.dData, b.sData, { threshold: o.threshold, antialias: o.antialias, ignoreMask: mask });
+    var diffCv = canvasOf(L.W, L.H);
+    diffCv.getContext('2d').putImageData(new ImageData(diff.diffImage.data, L.W, L.H), 0, 0);
+    var list = DiffCore.layerCompare(imgData(b.fullD), imgData(b.fullS), {
+      scale: S, designTopPt: L.designTopPt, children: children, ignored: ignored,
+      roles: classification.roles, boundaries: classification.boundaries,
+      searchPt: o.searchPt, tolerance: o.tolerance
+    }).issues;
+    state.res = {
+      W: L.W, H: L.H, S: S, layout: L, list: DiffCore.confirmLayoutIssues(list, diff, L), opts: o, crop: b.crop, node: b.exp.node,
+      diffPercent: diff.diffCount / Math.max(1, L.W * L.H - countOnes(mask)) * 100, designCv: b.designCv, shotCv: b.shotCv, diffCv: diffCv
+    };
+    showResults();
+  }
+  function countOnes(m) { var n = 0; for (var i = 0; i < m.length; i++) n += m[i]; return n; }
+
+  function setIgnore(ids) {
+    state.ignoreIds = ids;
+    post({ type: 'set-ignore', ids: ids });
+    analyze();
+  }
+
+  // ---- results ----
+  function fmt(n) { return (Math.round(n * 10) / 10).toString(); }
+
+  function issueNote(g) {
+    if (g.kind === 'spacing') return 'Sai spacing - spacing gốc ' + fmt(g.designGap) + ' px';
+    if (g.kind === 'content') return 'Kiểm tra nội dung tiêu đề - nội dung gốc “' + g.label + '”';
+    if (g.kind === 'icon') return 'Sai UI icon - đối chiếu hình dạng, nét hoặc màu với ' + g.label + ' trong Figma';
+    var dimensions = fmt(g.w) + ' × ' + fmt(g.h) + ' px';
+    if (g.metric === 'fontSize') dimensions = 'cỡ chữ ' + fmt(g.fontSize) + ' px';
+    if (g.metric === 'fontWeight') dimensions = 'độ đậm ' + g.fontWeight;
+    return 'Sai kích thước ' + g.label + ' - kích thước gốc ' + dimensions;
+  }
+
+  function showResults() {
+    var r = state.res;
+    $('results').classList.remove('hidden');
+    var counts = { spacing: 0, size: 0, content: 0, icon: 0 };
+    r.list.forEach(function (g) { counts[g.kind]++; });
+    $('summary').textContent = counts.spacing + ' spacing · ' + counts.size + ' kích thước · ' +
+      counts.icon + ' UI icon · ' + counts.content + ' nội dung';
+    var box = $('regions');
+    box.textContent = '';
+    r.list.forEach(function (g) {
+      var d = document.createElement('div'), t = document.createElement('span');
+      d.className = 'reg'; t.className = 't';
+      var dot = document.createElement('span');
+      dot.className = 'dot ' + g.kind;
+      d.appendChild(dot);
+      t.textContent = '#' + g.index + ' · ' + issueNote(g) + (g.kind === 'spacing' ? ' · ' + g.label : '');
+      d.appendChild(t);
+      if (g.nodeId) {
+        var ig = document.createElement('button');
+        ig.className = 'ig'; ig.textContent = 'Ignore';
+        ig.onclick = function (e) {
+          e.stopPropagation();
+          if (state.ignoreIds.indexOf(g.nodeId) < 0) setIgnore(state.ignoreIds.concat([g.nodeId]));
+        };
+        d.appendChild(ig);
+      }
+      d.onclick = function () {
+        if (g.nodeId) post({ type: 'focus-node', nodeId: g.nodeId });
+        else post({ type: 'focus-region', x: g.x, y: g.y, w: g.w, h: g.h });
+      };
+      d.onmouseenter = function () { state.hover = g.index; drawPreview(); };
+      d.onmouseleave = function () { state.hover = -1; drawPreview(); };
+      box.appendChild(d);
+    });
+    var chips = $('ignored');
+    chips.textContent = '';
+    chips.classList.toggle('hidden', !state.ignoreIds.length);
+    if (state.ignoreIds.length) {
+      var lb = document.createElement('span');
+      lb.className = 'muted'; lb.textContent = 'Ignored:';
+      chips.appendChild(lb);
+      state.ignoreIds.forEach(function (id) {
+        var c = document.createElement('span'), n = document.createElement('span'), x = document.createElement('button');
+        c.className = 'chip'; n.textContent = state.ignoreNames[id] || id; x.textContent = '×';
+        x.onclick = function () { setIgnore(state.ignoreIds.filter(function (v) { return v !== id; })); };
+        c.appendChild(n); c.appendChild(x); chips.appendChild(c);
+      });
+    }
+    drawPreview();
+  }
+
+  // Convert a box in design units to working pixels.
+  function boxOf(r, b) {
+    var S = r.S;
+    return { x: b.x * S, y: (b.y - r.layout.designTopPt) * S, w: b.w * S, h: b.h * S };
+  }
+
+  function drawBoxes(ctx, r, ox, sc, hover, source) {
+    ctx.font = 'bold 11px sans-serif'; ctx.textBaseline = 'top';
+    r.list.forEach(function (g) {
+      var region = source === 'diff' ? g.diffBox || g : source === 'actual' ? g.highlightBox || g.actualBox : g;
+      var b = boxOf(r, region), x = ox + b.x * sc, y = b.y * sc, w = b.w * sc, h = b.h * sc;
+      var on = g.index === hover;
+      var col = g.kind === 'size' ? '#0d99ff' : g.kind === 'spacing' ? '#ff0000' : '#ff2d55';
+      ctx.lineWidth = on ? 3 : 1.5;
+      ctx.strokeStyle = on ? '#0d99ff' : col;
+      ctx.fillStyle = g.kind === 'size' ? 'rgba(13,153,255,.5)' : on ? 'rgba(13,153,255,.25)' : col + '22';
+      ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+      var t = '' + g.index, tw = ctx.measureText(t).width + 6;
+      ctx.fillStyle = on ? '#0d99ff' : col;
+      ctx.fillRect(x, y, tw, 14);
+      ctx.fillStyle = '#fff'; ctx.fillText(t, x + 3, y + 2);
+    });
+  }
+
+  function drawPreview() {
+    var r = state.res;
+    if (!r) return;
+    var cv = $('preview'), side = state.view === 'side', gap = 8;
+    var totalW = side ? r.W * 2 + gap : r.W;
+    var avail = $('previewWrap').clientWidth || 380;
+    var sc = avail / totalW;
+    cv.width = Math.max(1, Math.round(totalW * sc));
+    cv.height = Math.max(1, Math.round(r.H * sc));
+    var ctx = cv.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    var w = r.W * sc, h = r.H * sc;
+    if (side) {
+      ctx.drawImage(r.designCv, 0, 0, w, h);
+      ctx.drawImage(r.shotCv, (r.W + gap) * sc, 0, w, h);
+      drawBoxes(ctx, r, 0, sc, state.hover, 'design');
+      drawBoxes(ctx, r, (r.W + gap) * sc, sc, state.hover, 'actual');
+    } else if (state.view === 'overlay') {
+      ctx.drawImage(r.designCv, 0, 0, w, h);
+      ctx.globalAlpha = parseFloat($('opacity').value);
+      ctx.drawImage(r.shotCv, 0, 0, w, h);
+      ctx.globalAlpha = 1;
+      drawBoxes(ctx, r, 0, sc, state.hover, 'design');
+    } else {
+      ctx.drawImage(r.diffCv, 0, 0, w, h);
+      drawBoxes(ctx, r, 0, sc, state.hover, 'diff');
+    }
+  }
+
+  document.querySelectorAll('button.tab').forEach(function (b) {
+    b.onclick = function () {
+      state.view = b.getAttribute('data-view');
+      document.querySelectorAll('button.tab').forEach(function (x) { x.classList.toggle('active', x === b); });
+      $('opacity').classList.toggle('hidden', state.view !== 'overlay');
+      drawPreview();
+    };
+  });
+  $('opacity').oninput = drawPreview;
+  window.addEventListener('resize', drawPreview);
+
+  // ---- actions ----
+  function annotationIssues(issues) {
+    var notes = [];
+    issues.forEach(function (issue) {
+      var box = issue.actualBox;
+      var note = issueNote(issue);
+      var isIcon = issue.kind === 'icon' || (issue.kind === 'size' && issue.role === 'icon');
+      var sameRow = isIcon && notes.find(function (entry) {
+        if (!entry.isIcon || entry.note !== note) return false;
+        var other = entry.issue.actualBox;
+        var overlap = Math.min(box.y + box.h, other.y + other.h) - Math.max(box.y, other.y);
+        return overlap >= Math.min(box.h, other.h) * 0.5;
+      });
+      if (sameRow) {
+        sameRow.count++;
+      } else {
+        notes.push({ issue: issue, isIcon: isIcon, note: note, count: 1 });
+      }
+    });
+    return notes;
+  }
+
+  $('markBtn').onclick = async function () {
+    var r = state.res, b = state.base;
+    if (!r || !b || state.busy) return;
+    var btn = $('markBtn');
+    state.busy = true;
+    updateCompare();
+    btn.disabled = true;
+    try {
+      var cv = canvasOf(r.W, r.layout.shotScaledH);
+      cv.getContext('2d').drawImage(b.shot.img, 0, 0, cv.width, cv.height);
+      var blob = await new Promise(function (resolve) { cv.toBlob(resolve, 'image/png'); });
+      if (!blob) throw new Error('Không thể xuất ảnh Actual UI');
+      var top = r.layout.shotTop / r.S;
+      var annotations = annotationIssues(r.list);
+      await request({
+        type: 'mark', nodeId: r.node.id, bytes: new Uint8Array(await blob.arrayBuffer()),
+        width: cv.width / r.S, height: cv.height / r.S,
+        regions: annotations.map(function (entry) {
+          var g = entry.issue;
+          var anchor = g.actualDiffBox || g.actualBox;
+          var b = boxOf(r, g.highlightBox || anchor);
+          var x0 = Math.max(0, b.x / r.S), y0 = Math.max(0, b.y / r.S + top);
+          var x1 = Math.min(cv.width / r.S, (b.x + b.w) / r.S);
+          var y1 = Math.min(cv.height / r.S, (b.y + b.h) / r.S + top);
+          var box = x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+          var note = entry.note + (g.kind === 'spacing' ? '\n' + g.label : '');
+          if (entry.count > 1) note += '\n' + entry.count + ' icon trong hàng cùng lỗi';
+          return {
+            index: g.index, x: anchor.x + anchor.w / 2,
+            y: anchor.y + anchor.h / 2 - r.layout.designTopPt + top,
+            kind: g.kind, box: box, note: note
+          };
+        })
+      }, 'marked');
+      setStatus('Đã tạo ' + annotations.length + ' ghi chú trên Actual UI');
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      state.busy = false;
+      updateCompare();
+      btn.disabled = false;
+    }
+  };
+  $('clearBtn').onclick = function () { post({ type: 'clear-marks' }); };
+
+  function download(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+  function baseName() { return ((state.res && state.res.node.name) || 'diff').replace(/[^\w.-]+/g, '_'); }
+
+  $('pngBtn').onclick = function () {
+    var r = state.res;
+    if (!r) return;
+    var cv = canvasOf(r.W, r.H), ctx = cv.getContext('2d');
+    ctx.drawImage(r.diffCv, 0, 0);
+    drawBoxes(ctx, r, 0, 1, -1, 'diff');
+    cv.toBlob(function (b) { if (b) download(b, baseName() + '-diff.png'); }, 'image/png');
+  };
+  $('jsonBtn').onclick = function () {
+    var r = state.res;
+    if (!r) return;
+    var report = {
+      node: r.node, ignoredIds: state.ignoreIds, settings: r.opts, crop: r.crop,
+      screenshot: { width: state.base.shot.w, height: state.base.shot.h, name: state.base.shot.name, deviceScale: r.layout.k },
+      diffPercent: r.diffPercent,
+      heightMismatch: r.layout.heightMismatch
+        ? { designPt: r.layout.Hd / r.S, uiPt: r.layout.Hs / r.S } : false,
+      regions: r.list.map(function (g) {
+        var o = {
+          index: g.index, x: g.x, y: g.y, w: g.w, h: g.h, label: g.label,
+          node: g.nodeId ? { id: g.nodeId, name: g.nodeName, type: g.nodeType } : null
+        };
+        o.kind = g.kind;
+        o.note = issueNote(g);
+        o.actualBox = g.actualBox;
+        if (g.diffBox) o.diffBox = g.diffBox;
+        if (g.kind === 'spacing') { o.axis = g.axis; o.designGap = g.designGap; o.actualGap = g.actualGap; }
+        if (g.kind === 'size') { o.metric = g.metric; o.fontSize = g.fontSize; o.fontWeight = g.fontWeight; }
+        return o;
+      })
+    };
+    download(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }), baseName() + '-diff.json');
+  };
+})();
+</script>
+</body>
+</html>
