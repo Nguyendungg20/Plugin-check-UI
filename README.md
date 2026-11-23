@@ -24,6 +24,11 @@ Plugin Figma so sánh một node thiết kế với ảnh chụp màn hình UI t
 - **Spacing**: lấy vị trí và tên component từ Figma, so các khối UI kề nhau từ trên xuống trước, rồi so trái sang phải giữa các phần tử cùng hàng. Phép so áp dụng cả cho frame, group và các layer ở group khác nhau. Icon được loại khỏi phép đo spacing. Chỉ báo khi chênh hơn 3 px sau khi căn ảnh theo chiều rộng thiết kế. Frame Actual UI tô đỏ vùng spacing với opacity 10% trên toàn bộ bề ngang hoặc chiều cao của cặp container và ghi khoảng cách gốc cùng tên hai component.
 - **Kích thước**: ước lượng chênh lệch kích thước icon, nút, cỡ chữ và độ đậm của tiêu đề từ hình ảnh. Ghi chú lấy kích thước, cỡ chữ hoặc độ đậm gốc trực tiếp từ Figma.
 - **UI icon**: so hình thức hiển thị của icon với Figma sau khi căn vị trí. Ghi chú khi ảnh cho thấy khác biệt về hình dạng, nét hoặc màu.
+- **Padding**: so khoảng cách từ mép trái/trên/dưới của card (layer có nền) tới nội dung ngoài cùng bên trong. Báo khi chênh hơn 3 px, ghi chú nêu padding gốc.
+- **Màu sắc**: so màu chữ (màu nét chữ đậm nhất) và màu nền card (trung vị, đã trừ phần bo góc) với thiết kế. Ghi chú nêu mã màu gốc và mã màu thực tế.
+- **Thiếu phần tử**: tiêu đề, chữ, icon hoặc nút không tìm thấy và vị trí dự kiến trên ảnh trống. Chỉ báo phần tử ngoài cùng, không báo lại các layer con.
+- **Thứ tự**: hai nội dung trong cùng container bị đảo vị trí (ví dụ hai hàng đổi chỗ). Các lệch spacing bên trong hai khối bị đảo được gộp vào lỗi này.
+- **Bo góc**: so độ phủ ở 4 góc của card với thiết kế; chỉ kiểm tra khi card tương phản đủ với nền xung quanh.
 - **Nội dung**: chỉ gợi ý kiểm tra tiêu đề màn hình, tên nút, nhãn icon và tiêu đề card/section có dấu hiệu hiển thị khác. Báo cáo đưa nội dung gốc từ Figma để lập trình viên đối chiếu. Tiêu đề được suy đoán từ tên layer, quan hệ cha–con và kiểu chữ.
 
 ## Bỏ qua layer
@@ -51,4 +56,15 @@ Plugin Figma so sánh một node thiết kế với ảnh chụp màn hình UI t
 ## Lưu ý
 
 - Ảnh chụp không cung cấp giá trị CSS, độ đậm thực tế hoặc chuỗi ký tự. Kiểm tra cỡ chữ, độ đậm và nội dung dựa trên đối chiếu hình ảnh. Layer có tên như `Screen Title`, `Button`, `Icon`, `List` và `Description` giúp plugin phân loại đúng hơn.
+- Ảnh chụp có chiều rộng nhỏ hơn bản thiết kế đã xuất (ví dụ ảnh chụp qua chat bị nén) sẽ hiện cảnh báo độ phân giải thấp. Plugin hạ độ phân giải thiết kế tương ứng để giảm báo nhầm, nhưng nên dùng ảnh chụp gốc từ thiết bị.
 - **Diff** xác nhận có pixel khác biệt gần vùng spacing hoặc kích thước trước khi plugin ghi chú. Plugin phân loại nguyên nhân theo phép đo hình học. Ghi chú trên Actual UI dùng thông số gốc từ Figma. Lỗi ở nửa trái đặt note bên trái, lỗi từ giữa ảnh sang phải đặt note bên phải. Diff vẫn có thể hiển thị các khác biệt màu hoặc chi tiết phụ.
+
+## Kiểm thử hồi quy
+
+`test/harness.html` chạy `ui.html` trong iframe với bản thiết kế xuất sẵn (`test/fixtures/export.json`, `design@2x.png`) và các ảnh chụp có lỗi cài sẵn, rồi chấm điểm báo cáo JSON (bắt đúng, sai loại, bỏ sót, báo nhầm).
+
+```bash
+python3 -m http.server 8766 --bind 127.0.0.1
+```
+
+Mở `http://127.0.0.1:8766/test/harness.html` và chạy `await H.runAll()` trong console.

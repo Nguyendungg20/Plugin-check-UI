@@ -61,6 +61,9 @@
   .dot.icon { background: #ff2d55; }
   .dot.content { background: #ff2d55; }
   .dot.spacing { background: #af52de; }
+  .dot.color { background: #ff9500; }
+  .dot.missing, .dot.order { background: #ff2d55; }
+  .dot.radius { background: #0d99ff; }
   #ignored { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; }
   .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; border-radius: 10px;
           background: var(--bg2); border: 1px solid var(--bd); max-width: 160px; }
@@ -134,6 +137,7 @@
 <div id="results" class="hidden">
   <div class="card">
     <div id="summary"></div>
+    <div id="warn" class="warn hidden"></div>
   </div>
   <div class="row">
     <button class="tab active" data-view="side">Side by side</button>
@@ -276,7 +280,8 @@
   function confirmLayoutIssues(issues, diff, layout) {
     var confirmed = [];
     issues.forEach(function (issue) {
-      if (issue.kind !== 'content') {
+      // Color, radius, order and missing checks carry their own pixel evidence.
+      if (issue.kind === 'spacing' || issue.kind === 'size' || issue.kind === 'icon') {
         var actual = diffEvidence(diff, issue.actualBox, layout, issue.kind === 'spacing' ? 2 : 0);
         var evidence = actual || diffEvidence(diff, issue, layout, 2);
         if (!evidence) return;
@@ -476,6 +481,8 @@
       if (!secondary.test(c.name) && c.text && (heading.test(c.name) || control ||
           (c.fontSize >= 16 && (c.fontWeight >= 600 || /bold|semibold/i.test(c.fontStyle || '')) && c.text.length <= 55))) {
         roles[c.id] = 'title';
+      } else if (c.text) {
+        roles[c.id] = 'text';
       }
     });
     return { roles: roles, excluded: excluded, boundaries: boundaries };
@@ -552,7 +559,7 @@
           best[other] + best[crossOffset] + best['actual' + crossSize.toUpperCase()]) - highlight[other];
         out.push(Object.assign(design, {
           kind: 'spacing', axis: axis, actualBox: box, highlightBox: highlight, designGap: gap, actualGap: actualGap,
-          nodeId: best.id, nodeName: a.name + ' ↔ ' + best.name, nodeType: 'GAP', label: a.name + ' ↔ ' + best.name
+          nodeId: best.id, nodeIds: [a.id, best.id], nodeName: a.name + ' ↔ ' + best.name, nodeType: 'GAP', label: a.name + ' ↔ ' + best.name
         }));
       });
     });
@@ -570,10 +577,13 @@
         var w = Math.round(bx.w * sx), h = Math.round(bx.h * sy);
         if (w < 4 || h < 4) return;
         var anchors = role === 'button' ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.65, 0.8, 1];
+        // A resized element rarely keeps the unscaled match's anchor exactly: nudge a few points.
+        var nudges = role === 'title' ? grid(0, 0, 3, 3, 1) : [[0, 0]];
         anchors.forEach(function (ax) {
           anchors.forEach(function (ay) {
-            var x = Math.round(bx.x + match.dx + (bx.w - w) * ax);
-            var y = Math.round(bx.y + match.dy + (bx.h - h) * ay);
+           nudges.forEach(function (nd) {
+            var x = Math.round(bx.x + match.dx + (bx.w - w) * ax) + nd[0];
+            var y = Math.round(bx.y + match.dy + (bx.h - h) * ay) + nd[1];
             if (!fitsAt(Q, { x: x, y: y, w: w, h: h }, 0, 0)) return;
             var n = 0, sp = 0, sq = 0, pp = 0, qq = 0, pq = 0;
             for (var j = 0; j < bx.h; j += step) {
@@ -594,6 +604,7 @@
             if (vp <= 0 || vq <= 0) return;
             var score = (1 - (pq - sp * sq / n) / Math.sqrt(vp * vq)) * 100;
             if (score < best.score) best = { x: x, y: y, w: w, h: h, score: score };
+           });
           });
         });
       });
@@ -624,12 +635,118 @@
     for (var y = 0; y < design.h; y++) {
       for (var x = 0; x < design.w; x++) {
         var d = (((design.y + y) * scale) * D.width + (design.x + x) * scale) * 4;
-        var s = (((actual.y + y) * scale) * Sh.width + (actual.x + x) * scale) * 4;
-        if (Math.abs(colorDelta(D.data, Sh.data, d, s, false)) > MAX_DELTA * 0.15 * 0.15) changed++;
+        // Best of a 3x3 neighbourhood, so a one-pixel misalignment does not read as a colour change.
+        var ax = (actual.x + x) * scale, ay = (actual.y + y) * scale, low = Infinity;
+        for (var oy = -1; oy <= 1 && low > 0; oy++) {
+          for (var ox = -1; ox <= 1; ox++) {
+            var sx = Math.min(Sh.width - 1, Math.max(0, ax + ox)), sy = Math.min(Sh.height - 1, Math.max(0, ay + oy));
+            low = Math.min(low, Math.abs(colorDelta(D.data, Sh.data, d, (sy * Sh.width + sx) * 4, false)));
+          }
+        }
+        if (low > MAX_DELTA * 0.15 * 0.15) changed++;
       }
     }
     return changed >= Math.max(4, design.w * design.h * 0.12);
   }
+
+  // Tight box around the visible glyphs of a text layer (1pt gray image).
+  function inkBox(G, bx) {
+    var edge = [], x, y;
+    for (x = 0; x < bx.w; x++) {
+      edge.push(G.g[bx.y * G.w + bx.x + x]);
+      edge.push(G.g[(bx.y + bx.h - 1) * G.w + bx.x + x]);
+    }
+    edge.sort(function (a, b) { return a - b; });
+    var bg = edge[Math.floor(edge.length / 2)];
+    var x0 = bx.x + bx.w, y0 = bx.y + bx.h, x1 = -1, y1 = -1;
+    for (y = bx.y; y < bx.y + bx.h; y++) {
+      for (x = bx.x; x < bx.x + bx.w; x++) {
+        if (Math.abs(G.g[y * G.w + x] - bg) < 18) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < 0) return null;
+    x0 = Math.max(bx.x, x0 - 1); y0 = Math.max(bx.y, y0 - 1);
+    x1 = Math.min(bx.x + bx.w - 1, x1 + 1); y1 = Math.min(bx.y + bx.h - 1, y1 + 1);
+    return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+
+  // Two-pass search (3pt, then 1pt) for the best offset of a sample box.
+  function locate(P, Q, sample, center, rx, ry) {
+    var coarse = scan(P, Q, sample, grid(center.dx, center.dy, rx, ry, 3), 3, center);
+    if (!coarse) return null;
+    return scan(P, Q, sample, grid(coarse.dx, coarse.dy, 2, 2, 1), 1, coarse);
+  }
+
+  // ---- color helpers (full-resolution RGBA) ----
+  function rgbAt(img, x, y) {
+    var p = (y * img.width + x) * 4, a = img.data[p + 3] / 255;
+    return [blend(img.data[p], a), blend(img.data[p + 1], a), blend(img.data[p + 2], a)];
+  }
+  function yiqDelta(c1, c2) {
+    var y = rgb2y(c1[0], c1[1], c1[2]) - rgb2y(c2[0], c2[1], c2[2]);
+    var i = rgb2i(c1[0], c1[1], c1[2]) - rgb2i(c2[0], c2[1], c2[2]);
+    var q = rgb2q(c1[0], c1[1], c1[2]) - rgb2q(c2[0], c2[1], c2[2]);
+    return 0.5053 * y * y + 0.299 * i * i + 0.1957 * q * q;
+  }
+  function pxBox(b, S, W, H) {
+    var x0 = Math.max(0, Math.round(b.x * S)), y0 = Math.max(0, Math.round(b.y * S));
+    var x1 = Math.min(W, Math.round((b.x + b.w) * S)), y1 = Math.min(H, Math.round((b.y + b.h) * S));
+    return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+  }
+  // Per-channel median of a pixel box: the dominant (background) color.
+  function medianColor(img, b) {
+    var ch = [[], [], []], step = Math.max(1, Math.floor(Math.sqrt(b.w * b.h / 4000)));
+    for (var y = b.y; y < b.y + b.h; y += step) {
+      for (var x = b.x; x < b.x + b.w; x += step) {
+        var c = rgbAt(img, x, y); ch[0].push(c[0]); ch[1].push(c[1]); ch[2].push(c[2]);
+      }
+    }
+    if (!ch[0].length) return null;
+    return ch.map(function (v) { v.sort(function (a, b) { return a - b; }); return v[Math.floor(v.length / 2)]; });
+  }
+  // Mean color of the strongest-contrast half of the pixels: the glyph color.
+  function inkColor(img, b) {
+    var bg = medianColor(img, b);
+    if (!bg) return null;
+    var px = [], bgY = rgb2y(bg[0], bg[1], bg[2]), y, x;
+    for (y = b.y; y < b.y + b.h; y++) {
+      for (x = b.x; x < b.x + b.w; x++) {
+        var c = rgbAt(img, x, y), d = Math.abs(rgb2y(c[0], c[1], c[2]) - bgY);
+        if (d >= 18) px.push({ c: c, d: d });
+      }
+    }
+    if (px.length < 6) return null;
+    px.sort(function (a, b) { return b.d - a.d; });
+    var n = Math.max(3, Math.floor(px.length / 2)), s = [0, 0, 0];
+    for (var i = 0; i < n; i++) { s[0] += px[i].c[0]; s[1] += px[i].c[1]; s[2] += px[i].c[2]; }
+    return [s[0] / n, s[1] / n, s[2] / n];
+  }
+  function hex(c) {
+    return '#' + c.map(function (v) { var h = Math.round(Math.max(0, Math.min(255, v))).toString(16); return h.length < 2 ? '0' + h : h; }).join('').toUpperCase();
+  }
+  function figmaHex(f) { return f ? hex([f.r * 255, f.g * 255, f.b * 255]) : null; }
+
+  // Share of corner pixels that take the card color rather than the color around the card.
+  function cornerFill(img, b, s, inner, outer) {
+    var corners = [[b.x, b.y, 1, 1], [b.x + b.w - 1, b.y, -1, 1], [b.x, b.y + b.h - 1, 1, -1], [b.x + b.w - 1, b.y + b.h - 1, -1, -1]];
+    return corners.map(function (k) {
+      var inside = 0, n = 0;
+      for (var j = 0; j < s; j++) {
+        for (var i = 0; i < s; i++) {
+          var x = k[0] + i * k[2], y = k[1] + j * k[3];
+          if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
+          var c = rgbAt(img, x, y);
+          if (yiqDelta(c, inner) < yiqDelta(c, outer)) inside++;
+          n++;
+        }
+      }
+      return n ? inside / n : 0;
+    });
+  }
+
+  var CONTENT_ROLES = { title: 1, text: 1, icon: 1, button: 1 };
 
   // Match visible UI elements against the screenshot at design resolution.
   function layerCompare(D, Sh, ctx) {
@@ -637,10 +754,21 @@
     var searchPt = ctx.searchPt === undefined ? 48 : ctx.searchPt;
     var tol = ctx.tolerance === undefined ? 25 : ctx.tolerance;
     var Gd = toGray(D, S), Gs = toGray(Sh, S);
-    var byId = {}, results = [], issues = [], resMap = {};
+    var byId = {}, results = [], issues = [], resMap = {}, missing = {};
     children.forEach(function (c) { byId[c.id] = c; });
     var roles = ctx.roles;
     var containers = /^(FRAME|GROUP|INSTANCE|COMPONENT)$/;
+
+    function nearestMatched(c) {
+      var p = byId[c.parentId];
+      while (p && !resMap[p.id]) p = byId[p.parentId];
+      return p ? resMap[p.id] : null;
+    }
+    function nearestCard(c) {
+      var p = byId[c.parentId];
+      while (p && !(resMap[p.id] && resMap[p.id].card)) p = byId[p.parentId];
+      return p ? resMap[p.id] : null;
+    }
 
     children.forEach(function (c) {
       // Spacing is geometric. Unnamed painted layers can provide anchors
@@ -650,11 +778,15 @@
       if (!role || (ignored.has(c.id) && !boundary) || c.w < 6 || c.h < 6) return;
       var bx = { x: Math.round(c.x), y: Math.round(c.y - top), w: Math.round(c.w), h: Math.round(c.h) };
       if (!fitsAt(Gd, bx, 0, 0) || (!boundary && bx.w * bx.h > 0.6 * Gd.w * Gd.h)) return;
+      var isText = role === 'title' || role === 'text';
       var sample = bx;
       if (boundary) {
         var start = Math.max(0, bx.y - 4);
         sample = { x: bx.x, y: start, w: bx.w, h: Math.min(bx.y + 6, Gd.h) - start };
-      } else if (patchStd(Gd, sample) < 4 && role !== 'title') {
+      } else if (isText) {
+        // Match the glyphs, not the (often full-width) text frame.
+        sample = inkBox(Gd, bx) || bx;
+      } else if (patchStd(Gd, sample) < 4) {
         var left = Math.max(0, bx.x - 3), upper = Math.max(0, bx.y - 3);
         sample = {
           x: left, y: upper, w: Math.min(Gd.w, bx.x + bx.w + 3) - left,
@@ -671,32 +803,91 @@
       if (parent && role === 'icon' && roles[parent.id] === 'icon') return;
       var ref = parent && resMap[parent.id];
       var center = ref ? { dx: ref.dx, dy: ref.dy } : { dx: 0, dy: 0 };
-      var coarse = scan(Gd, Gs, sample, grid(center.dx, center.dy, searchPt, searchPt, 3), 3, center);
-      if (!coarse) return;
-      var found = scan(Gd, Gs, sample, grid(coarse.dx, coarse.dy, 2, 2, 1), 1, center);
-      if (!found) return;
-      var originalMatch = { x: bx.x + found.dx, y: bx.y + found.dy, w: bx.w, h: bx.h, score: found.s };
-      var actual = found.s > 2 && role !== 'layout' && sample === bx ? scaledMatch(Gd, Gs, bx, found, role) : originalMatch;
+      var found = locate(Gd, Gs, sample, center, searchPt, searchPt);
+      var moved = false;
+      if ((!found || found.s > 6) && isText) {
+        // Content can move further than the search range when siblings are reordered,
+        // leaving only a lookalike nearby: look again anywhere inside the nearest matched card.
+        var card = nearestCard(c);
+        if (card) {
+          var top0 = Math.round(card.y - top + card.dy), bottom0 = top0 + Math.round(card.actualH);
+          var ry = Math.max(bottom0 - sample.y, sample.y + sample.h - top0);
+          var wide = scan(Gd, Gs, sample, grid(Math.round(card.dx), 0, 6, ry, 2), 2, center);
+          if (wide) wide = scan(Gd, Gs, sample, grid(wide.dx, wide.dy, 1, 1, 1), 1, wide);
+          var better = !found || (found.s > tol ? wide && wide.s < found.s :
+            wide && wide.s < found.s * 0.5 && Math.abs(wide.dy - found.dy) > 4);
+          if (wide && wide.s <= Math.min(tol, 12) && better) { found = wide; moved = true; }
+        }
+      }
+      if (!found || found.s > tol) {
+        // Nothing comparable nearby: report missing when the expected spot is blank.
+        if (CONTENT_ROLES[role] && !boundary) {
+          var spot = { x: sample.x + center.dx, y: sample.y + center.dy, w: sample.w, h: sample.h };
+          if (fitsAt(Gs, spot, 0, 0) && patchStd(Gs, spot) < Math.max(3, patchStd(Gd, sample) * 0.3)) {
+            var p2 = byId[c.parentId];
+            while (p2 && !missing[p2.id]) p2 = byId[p2.parentId];
+            missing[c.id] = true;
+            if (!p2) {
+              issues.push({
+                id: c.id, nodeId: c.id, nodeName: c.name, nodeType: c.type, nodeIds: [c.id], kind: 'missing', role: role,
+                label: c.text || c.name, x: c.x, y: c.y, w: c.w, h: c.h,
+                actualBox: { x: c.x + center.dx, y: c.y + center.dy, w: c.w, h: c.h }
+              });
+            }
+          }
+        }
+      }
+      if (!found || missing[c.id] || missing[c.parentId]) return;
+
+      var originalMatch = { x: sample.x + found.dx, y: sample.y + found.dy, w: sample.w, h: sample.h, score: found.s };
+      var canScale = found.s > 2 && !moved && (role === 'title' || role === 'icon' || role === 'button') &&
+        (sample === bx || isText);
+      // A weak unscaled match is usually a lookalike elsewhere; scale around the parent's offset instead.
+      var seed = found.s > tol ? { dx: center.dx, dy: center.dy, s: found.s } : found;
+      var actual = canScale ? scaledMatch(Gd, Gs, sample, seed, role) : originalMatch;
       var scaled = actual.score + 0.5 < found.s * 0.85 && actual.score <= Math.min(24, tol);
       if (!scaled) actual = originalMatch;
+      var ratioW = actual.w / sample.w, ratioH = actual.h / sample.h;
 
       var result = {
         id: c.id, name: c.name, parentId: c.parentId, nodeId: c.id, nodeName: c.name, nodeType: c.type,
         label: role === 'title' ? c.text : c.name, x: c.x, y: c.y, w: c.w, h: c.h,
-        dx: actual.x - bx.x, dy: actual.y - bx.y,
-        actualW: scaled ? actual.w : c.w, actualH: scaled ? actual.h : c.h, score: actual.score,
-        topBoundaryOnly: boundary, role: role
+        dx: actual.x - sample.x, dy: actual.y - sample.y,
+        actualW: scaled ? (isText ? c.w : c.w * ratioW) : c.w,
+        actualH: scaled ? c.h * ratioH : c.h, score: actual.score,
+        topBoundaryOnly: boundary, role: role, moved: moved
       };
+
+      // Cards: locate the top and bottom edges separately so a taller card
+      // does not read as a shifted one.
+      if (role === 'layout' && c.opaque && !c.media && !boundary && bx.h >= 24) {
+        var band = Math.min(12, Math.floor(bx.h / 2));
+        var topBand = { x: bx.x, y: Math.max(0, bx.y - 4), w: bx.w, h: band + 4 };
+        var botBand = { x: bx.x, y: bx.y + bx.h - band, w: bx.w, h: Math.min(band + 4, Gd.h - (bx.y + bx.h - band)) };
+        var t = patchStd(Gd, topBand) >= 3 && locate(Gd, Gs, topBand, center, 4, searchPt);
+        var b = botBand.h > 4 && patchStd(Gd, botBand) >= 3 && locate(Gd, Gs, botBand, center, 4, searchPt);
+        if (t && b && t.s <= tol && b.s <= tol && Math.abs(t.dx - b.dx) <= 2) {
+          result.dx = t.dx; result.dy = t.dy;
+          result.actualH = Math.max(1, c.h + b.dy - t.dy);
+          result.score = Math.max(t.s, b.s);
+          result.card = true;
+          actual.score = result.score;
+        }
+      }
+
       var metric = null;
       var fontWeight = c.fontWeight || c.fontStyle;
-      if (scaled && (Math.abs(actual.h - bx.h) >= 2 || Math.abs(actual.w - bx.w) >= 2)) {
-        if (role === 'title' && c.fontSize && Math.abs(actual.h - bx.h) >= 2) metric = 'fontSize';
-        else if (role !== 'title') metric = 'dimensions';
+      // Small icons sit near the 2pt limit at the nearest scale step (20pt x 0.92 = 18pt): require ~12% too.
+      var minDw = Math.max(2, isText ? 0 : sample.w * 0.12), minDh = Math.max(2, isText ? 0 : sample.h * 0.12);
+      if (scaled && (Math.abs(actual.h - sample.h) >= minDh || Math.abs(actual.w - sample.w) >= minDw)) {
+        if (role === 'title' && c.fontSize && Math.abs(actual.h - sample.h) >= 2) metric = 'fontSize';
+        else if (role !== 'title' && role !== 'text') metric = 'dimensions';
       }
       var content = false;
-      if (role === 'title' && !scaled) {
+      if (role === 'title' && !scaled && !moved) {
+        var shifted = { x: bx.x + result.dx, y: bx.y + result.dy, w: bx.w, h: bx.h };
         var originalInk = textInk(Gd, bx);
-        var visible = textInk(Gs, actual);
+        var visible = fitsAt(Gs, shifted, 0, 0) ? textInk(Gs, shifted) : { density: 0, strong: 0 };
         var enoughInk = originalInk.density >= 0.05 && visible.density >= originalInk.density * 0.55 &&
           visible.density <= originalInk.density * 1.8 && visible.strong >= 0.02;
         var ratio = visible.strong / originalInk.strong;
@@ -726,20 +917,146 @@
           }
         }
       }
-      if (actual.score <= tol && (scaled || found.gap <= 30)) {
+      var accepted = actual.score <= tol && (scaled || found.gap <= 30 || result.card);
+      if (accepted) {
         results.push(result);
         resMap[c.id] = result;
       }
       if (metric || content || iconUI) {
+        result.flagged = true;
         issues.push(Object.assign({}, result, {
           kind: metric ? 'size' : iconUI ? 'icon' : 'content', metric: metric, fontSize: c.fontSize, fontWeight: fontWeight,
+          nodeIds: [c.id],
           actualBox: { x: c.x + result.dx, y: c.y + result.dy, w: result.actualW, h: result.actualH }
         }));
+      } else if (accepted) {
+        colorIssue(c, result);
       }
     });
 
+    function boxPx(r, actual) {
+      var b = actual ? { x: r.x + r.dx, y: r.y - top + r.dy, w: r.actualW, h: r.actualH } : { x: r.x, y: r.y - top, w: r.w, h: r.h };
+      return pxBox(b, S, D.width, D.height);
+    }
+
+    function colorIssue(c, r) {
+      var isText = r.role === 'title' || r.role === 'text';
+      var dBox = boxPx(r, false), aBox = boxPx(r, true);
+      if (dBox.w < 4 || dBox.h < 4 || aBox.w < 4 || aBox.h < 4) return;
+      var want, got, limit;
+      if (isText) {
+        want = inkColor(D, dBox); got = inkColor(Sh, aBox); limit = 400;
+      } else if (r.card && c.fill) {
+        // Inset by the corner radius so rounded corners do not count as background.
+        var inset = Math.round(Math.max(2, c.radius || 0) * S);
+        var shrink = function (b) { return { x: b.x + inset, y: b.y + inset, w: Math.max(1, b.w - 2 * inset), h: Math.max(1, b.h - 2 * inset) }; };
+        want = medianColor(D, shrink(dBox)); got = medianColor(Sh, shrink(aBox)); limit = 50;
+      } else {
+        return;
+      }
+      if (!want || !got || yiqDelta(want, got) < limit) return;
+      issues.push(Object.assign({}, r, {
+        kind: 'color', metric: isText ? 'text' : 'background', nodeIds: [c.id], label: isText ? '“' + c.text + '”' : c.name,
+        expectedColor: figmaHex(c.fill) || hex(want), actualColor: hex(got),
+        actualBox: { x: c.x + r.dx, y: c.y + r.dy, w: r.actualW, h: r.actualH }
+      }));
+    }
+
+    // Corner radius of matched cards.
+    results.forEach(function (r) {
+      var c = byId[r.id];
+      if (!r.card || !(c.radius >= 4)) return;
+      var dBox = boxPx(r, false), aBox = boxPx(r, true);
+      var ring = function (img, b) {
+        var o = Math.round(3 * S);
+        return medianColor(img, { x: Math.max(0, b.x - o), y: Math.max(0, b.y - o), w: Math.min(img.width, b.x) - Math.max(0, b.x - o), h: b.h });
+      };
+      var dIn = medianColor(D, dBox), dOut = ring(D, dBox), aIn = medianColor(Sh, aBox), aOut = ring(Sh, aBox);
+      if (!dIn || !dOut || !aIn || !aOut || yiqDelta(dIn, dOut) < 20 || yiqDelta(aIn, aOut) < 20) return;
+      var s = Math.round(Math.min(c.radius * 0.5, 8) * S);
+      var fd = cornerFill(D, dBox, s, dIn, dOut), fa = cornerFill(Sh, aBox, s, aIn, aOut);
+      var diff = 0;
+      for (var i = 0; i < 4; i++) diff += Math.abs(fa[i] - fd[i]);
+      if (diff / 4 < 0.25) return;
+      issues.push(Object.assign({}, r, {
+        kind: 'radius', radius: c.radius, nodeIds: [c.id],
+        actualBox: { x: c.x + r.dx, y: c.y + r.dy, w: r.actualW, h: r.actualH }
+      }));
+    });
+
+    // Padding: gap between a card edge and its outermost matched content.
+    results.forEach(function (card) {
+      if (!card.card) return;
+      var inner = results.filter(function (r) {
+        if (!CONTENT_ROLES[r.role] || r.moved) return false;
+        var p = byId[r.parentId];
+        while (p && !(resMap[p.id] && resMap[p.id].card)) p = byId[p.parentId];
+        return p && p.id === card.id;
+      });
+      if (!inner.length) return;
+      var sides = [
+        { side: 'left', axis: 'x', pick: function (a, b) { return a.x < b.x ? a : b; },
+          design: function (r) { return r.x - card.x; }, actual: function (r) { return (r.x + r.dx) - (card.x + card.dx); } },
+        { side: 'top', axis: 'y', pick: function (a, b) { return a.y < b.y ? a : b; },
+          design: function (r) { return r.y - card.y; }, actual: function (r) { return (r.y + r.dy) - (card.y + card.dy); } },
+        { side: 'bottom', axis: 'y', pick: function (a, b) { return a.y + a.h > b.y + b.h ? a : b; },
+          design: function (r) { return card.y + card.h - (r.y + r.h); },
+          actual: function (r) { return (card.y + card.dy + card.actualH) - (r.y + r.dy + r.actualH); } }
+      ];
+      sides.forEach(function (sd) {
+        var r = inner.reduce(sd.pick), want = sd.design(r), got = sd.actual(r);
+        if (Math.abs(got - want) <= 3) return;
+        var box;
+        if (sd.side === 'left') box = { x: card.x + card.dx, y: r.y + r.dy, w: Math.max(1, got), h: r.actualH };
+        else if (sd.side === 'top') box = { x: card.x + card.dx, y: card.y + card.dy, w: card.w, h: Math.max(1, got) };
+        else box = { x: card.x + card.dx, y: r.y + r.dy + r.actualH, w: card.w, h: Math.max(1, got) };
+        issues.push({
+          kind: 'spacing', metric: 'padding-' + sd.side, axis: sd.axis, designGap: want, actualGap: got,
+          id: card.id, nodeId: card.id, nodeName: card.name + ' ↔ ' + r.name, nodeType: 'GAP', nodeIds: [card.id, r.id],
+          label: card.name + ' ↔ ' + r.name, x: card.x, y: card.y, w: card.w, h: card.h, actualBox: box, highlightBox: box
+        });
+      });
+    });
+
+    // Order: two pieces of content inside the same container swapped places.
+    var content = results.filter(function (r) { return r.role === 'title' || r.role === 'text'; });
+    var ordered = {};
+    function chain(id) { var out = []; var p = byId[id]; while (p) { out.push(p.id); p = byId[p.parentId]; } return out; }
+    for (var i = 0; i < content.length; i++) {
+      for (var j = 0; j < content.length; j++) {
+        var a = content[i], b = content[j];
+        if (a === b || a.y + a.h > b.y || !(a.moved || b.moved)) continue;
+        if (a.y + a.dy <= b.y + b.dy) continue;
+        var ca = chain(a.id), cb = chain(b.id), lca = null, k;
+        for (k = 0; k < ca.length; k++) if (cb.indexOf(ca[k]) >= 0) { lca = ca[k]; break; }
+        if (!lca) continue;
+        var sa = ca[ca.indexOf(lca) - 1], sb = cb[cb.indexOf(lca) - 1];
+        if (!sa || !sb || sa === sb) continue;
+        var key = sa + '|' + sb;
+        if (ordered[key] || ordered[sb + '|' + sa]) continue;
+        ordered[key] = true;
+        var A = byId[sa], B = byId[sb];
+        issues.push({
+          kind: 'order', id: sa, nodeId: sa, nodeName: A.name + ' ↔ ' + B.name, nodeType: 'ORDER', nodeIds: [sa, sb, a.id, b.id],
+          label: '“' + (byId[a.id].text || a.name) + '” ↔ “' + (byId[b.id].text || b.name) + '”',
+          x: A.x, y: A.y, w: Math.max(A.x + A.w, B.x + B.w) - Math.min(A.x, B.x), h: B.y + B.h - A.y,
+          actualBox: { x: Math.min(A.x, B.x), y: A.y + Math.min(a.dy, b.dy), w: Math.max(A.x + A.w, B.x + B.w) - Math.min(A.x, B.x), h: B.y + B.h - A.y }
+        });
+      }
+    }
+
     issues.sort(function (a, b) { return a.y - b.y || a.x - b.x; });
-    issues = spacingIssues(results.filter(function (r) { return r.role !== 'icon'; }), byId).concat(issues);
+    // Flagged layers already explain the gaps around them.
+    issues = spacingIssues(results.filter(function (r) { return r.role !== 'icon' && !r.moved && !r.flagged; }), byId).concat(issues);
+    // Gaps inside swapped siblings are a consequence of the swap, not separate bugs.
+    var swapped = Object.keys(ordered).join('|').split('|').filter(Boolean);
+    if (swapped.length) {
+      issues = issues.filter(function (o) {
+        return o.kind !== 'spacing' || !o.nodeIds.some(function (id) {
+          return chain(id).some(function (a) { return swapped.indexOf(a) >= 0; });
+        });
+      });
+    }
     issues.forEach(function (o, n) { o.index = n + 1; });
     return { issues: issues };
   }
@@ -882,6 +1199,17 @@
       ctx.drawImage(dImg, 0, -L.designTop, L.W, L.designPxH);
       ctx = fullS.getContext('2d'); ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(shot.img, 0, -L.shotTop, L.W, L.shotScaledH);
+      // A screenshot with fewer pixels than the design export is blurry once scaled up.
+      // Blur the design the same way so softness alone does not count as a difference.
+      var lowRes = shot.w < L.W;
+      if (lowRes) {
+        var small = canvasOf(shot.w, Math.max(1, Math.round(L.Hd * shot.w / L.W)));
+        var sctx = small.getContext('2d'); sctx.imageSmoothingQuality = 'high';
+        sctx.drawImage(fullD, 0, 0, small.width, small.height);
+        ctx = fullD.getContext('2d');
+        ctx.clearRect(0, 0, L.W, L.Hd);
+        ctx.drawImage(small, 0, 0, L.W, L.Hd);
+      }
       var designCv = canvasOf(L.W, L.H), shotCv = canvasOf(L.W, L.H);
       designCv.getContext('2d').drawImage(fullD, 0, 0);
       shotCv.getContext('2d').drawImage(fullS, 0, 0);
@@ -890,7 +1218,7 @@
       state.ignoreNames = {};
       exp.children.forEach(function (c) { state.ignoreNames[c.id] = c.name; });
       state.base = {
-        exp: exp, L: L, o: o, crop: crop, shot: shot, fullD: fullD, fullS: fullS, designCv: designCv, shotCv: shotCv,
+        exp: exp, L: L, o: o, crop: crop, shot: shot, lowRes: lowRes, fullD: fullD, fullS: fullS, designCv: designCv, shotCv: shotCv,
         dData: imgData(designCv), sData: imgData(shotCv)
       };
       analyze();
@@ -925,6 +1253,8 @@
     }).issues;
     state.res = {
       W: L.W, H: L.H, S: S, layout: L, list: DiffCore.confirmLayoutIssues(list, diff, L), opts: o, crop: b.crop, node: b.exp.node,
+      warning: b.lowRes ? 'Ảnh chụp độ phân giải thấp (' + b.shot.w + ' px ngang, thiết kế cần ' + L.W +
+        ' px). Dùng ảnh chụp gốc từ thiết bị để kết quả chính xác hơn.' : '',
       diffPercent: diff.diffCount / Math.max(1, L.W * L.H - countOnes(mask)) * 100, designCv: b.designCv, shotCv: b.shotCv, diffCv: diffCv
     };
     showResults();
@@ -940,8 +1270,19 @@
   // ---- results ----
   function fmt(n) { return (Math.round(n * 10) / 10).toString(); }
 
+  var PADDING_SIDE = { 'padding-left': 'trái', 'padding-top': 'trên', 'padding-bottom': 'dưới' };
   function issueNote(g) {
+    if (g.kind === 'spacing' && PADDING_SIDE[g.metric]) {
+      return 'Sai padding ' + PADDING_SIDE[g.metric] + ' - padding gốc ' + fmt(g.designGap) + ' px';
+    }
     if (g.kind === 'spacing') return 'Sai spacing - spacing gốc ' + fmt(g.designGap) + ' px';
+    if (g.kind === 'color') {
+      return (g.metric === 'text' ? 'Sai màu chữ ' : 'Sai màu nền ') + g.label + ' - màu gốc ' + g.expectedColor +
+        ', thực tế ' + g.actualColor;
+    }
+    if (g.kind === 'missing') return 'Thiếu phần tử “' + g.label + '” so với Figma';
+    if (g.kind === 'order') return 'Sai thứ tự - ' + g.label + ' bị đảo vị trí';
+    if (g.kind === 'radius') return 'Sai bo góc - bo góc gốc ' + fmt(g.radius) + ' px';
     if (g.kind === 'content') return 'Kiểm tra nội dung tiêu đề - nội dung gốc “' + g.label + '”';
     if (g.kind === 'icon') return 'Sai UI icon - đối chiếu hình dạng, nét hoặc màu với ' + g.label + ' trong Figma';
     var dimensions = fmt(g.w) + ' × ' + fmt(g.h) + ' px';
@@ -953,10 +1294,14 @@
   function showResults() {
     var r = state.res;
     $('results').classList.remove('hidden');
-    var counts = { spacing: 0, size: 0, content: 0, icon: 0 };
+    var counts = { spacing: 0, size: 0, content: 0, icon: 0, color: 0, missing: 0, order: 0, radius: 0 };
     r.list.forEach(function (g) { counts[g.kind]++; });
-    $('summary').textContent = counts.spacing + ' spacing · ' + counts.size + ' kích thước · ' +
-      counts.icon + ' UI icon · ' + counts.content + ' nội dung';
+    $('summary').textContent = [
+      [counts.spacing, 'spacing'], [counts.size, 'kích thước'], [counts.icon, 'UI icon'], [counts.content, 'nội dung'],
+      [counts.color, 'màu'], [counts.missing, 'thiếu phần tử'], [counts.order, 'thứ tự'], [counts.radius, 'bo góc']
+    ].filter(function (p, i) { return i < 4 || p[0]; }).map(function (p) { return p[0] + ' ' + p[1]; }).join(' · ');
+    $('warn').textContent = r.warning;
+    $('warn').classList.toggle('hidden', !r.warning);
     var box = $('regions');
     box.textContent = '';
     r.list.forEach(function (g) {
@@ -1156,6 +1501,7 @@
       node: r.node, ignoredIds: state.ignoreIds, settings: r.opts, crop: r.crop,
       screenshot: { width: state.base.shot.w, height: state.base.shot.h, name: state.base.shot.name, deviceScale: r.layout.k },
       diffPercent: r.diffPercent,
+      warning: r.warning || undefined,
       heightMismatch: r.layout.heightMismatch
         ? { designPt: r.layout.Hd / r.S, uiPt: r.layout.Hs / r.S } : false,
       regions: r.list.map(function (g) {
@@ -1164,10 +1510,13 @@
           node: g.nodeId ? { id: g.nodeId, name: g.nodeName, type: g.nodeType } : null
         };
         o.kind = g.kind;
+        if (g.nodeIds) o.nodeIds = g.nodeIds;
         o.note = issueNote(g);
+        if (g.kind === 'color') { o.metric = g.metric; o.expectedColor = g.expectedColor; o.actualColor = g.actualColor; }
+        if (g.kind === 'radius') o.radius = g.radius;
         o.actualBox = g.actualBox;
         if (g.diffBox) o.diffBox = g.diffBox;
-        if (g.kind === 'spacing') { o.axis = g.axis; o.designGap = g.designGap; o.actualGap = g.actualGap; }
+        if (g.kind === 'spacing') { o.axis = g.axis; o.designGap = g.designGap; o.actualGap = g.actualGap; if (g.metric) o.metric = g.metric; }
         if (g.kind === 'size') { o.metric = g.metric; o.fontSize = g.fontSize; o.fontWeight = g.fontWeight; }
         return o;
       })
