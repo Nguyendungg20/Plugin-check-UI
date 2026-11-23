@@ -27,7 +27,14 @@ function nodeFlags(n) {
     visiblePaints(n.strokes).some(function (p) { return paintOp(p) > 0; });
   var nodeOp = typeof n.opacity === 'number' ? n.opacity : 1;
   var opaque = media || fills.some(function (p) { return p.type === 'SOLID' && paintOp(p) * nodeOp >= 0.95; });
-  return { media: media, paints: paints, opaque: opaque };
+  var solid = fills.filter(function (p) { return p.type === 'SOLID'; }).pop();
+  var fill = solid ? { r: solid.color.r, g: solid.color.g, b: solid.color.b, a: paintOp(solid) * nodeOp } : null;
+  return { media: media, paints: paints, opaque: opaque, fill: fill };
+}
+
+function nodeRadius(n) {
+  if (typeof n.cornerRadius === 'number') return n.cornerRadius;
+  return typeof n.topLeftRadius === 'number' ? n.topLeftRadius : 0;
 }
 
 function post(msg) { figma.ui.postMessage(msg); }
@@ -117,7 +124,7 @@ async function doExport(scale) {
         id: n.id, name: n.name, type: n.type,
         x: b.x - tb.x, y: b.y - tb.y, w: b.width, h: b.height, depth: depth,
         parentId: n.parent && n.parent.id !== t.id ? n.parent.id : null,
-        media: fl.media, paints: fl.paints, opaque: fl.opaque,
+        media: fl.media, paints: fl.paints, opaque: fl.opaque, fill: fl.fill, radius: nodeRadius(n),
         text: n.type === 'TEXT' ? n.characters : null,
         fontSize: n.type === 'TEXT' && typeof n.fontSize === 'number' ? n.fontSize : null,
         fontWeight: n.type === 'TEXT' && typeof n.fontWeight === 'number' ? n.fontWeight : null,

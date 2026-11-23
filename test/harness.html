@@ -1,0 +1,132 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Regression harness</title>
+<style>
+  body { font: 12px -apple-system, sans-serif; margin: 12px; }
+  table { border-collapse: collapse; margin: 8px 0 16px; }
+  td, th { border: 1px solid #ccc; padding: 3px 6px; text-align: left; vertical-align: top; }
+  .ok { color: #1a7f37; } .bad { color: #c62828; } .warn { color: #b26b00; }
+  iframe { width: 420px; height: 900px; border: 1px solid #ccc; }
+</style>
+<div id="out">Run <code>await H.runAll()</code> in the console.</div>
+<iframe id="f"></iframe>
+<script>
+// Stands in for the Figma sandbox (code.js). Each case loads ../ui.html fresh,
+// feeds the design export + a screenshot, presses Compare and captures the JSON report.
+var CASES = [
+  { name: 'control-hires', shot: 'fixtures/control-hires.png', cropPt: 865, expect: [] },
+  { name: 'case1-hires', shot: 'fixtures/case1-hires.png', cropPt: 865, expect: [
+    { id: 'A', kind: 'content', nodes: ['I24:3496;13028:9753;13028:6408'] },
+    { id: 'B', kind: 'size', nodes: ['I24:3506;11028:8036'] },
+    { id: 'C', kind: 'icon', nodes: ['24:3573', '24:3572'] },
+    { id: 'D', kind: 'spacing', nodes: ['24:3501', '24:3502'] }
+  ] },
+  { name: 'case1-lowres', shot: 'fixtures/case1-lowres.png', cropPt: null, expect: 'case1-hires' },
+  { name: 'case2-hires', shot: 'fixtures/case2-hires.png', cropPt: 865, expect: [
+    { id: 'E', kind: 'color', nodes: ['24:3575'] },
+    { id: 'F', kind: 'color', nodes: ['24:3563'] },
+    { id: 'G', kind: 'missing', nodes: ['24:3543', 'I24:3543;603:2688'] },
+    { id: 'H', kind: 'order', nodes: ['24:3568', '24:3577', '24:3569', '24:3578'] },
+    { id: 'I', kind: 'radius', nodes: ['24:3500'] },
+    { id: 'J', kind: 'spacing', nodes: ['24:3503', '24:3504', '24:3507', 'I24:3506;11028:8036', '24:3512', '24:3540'] }
+  ] }
+];
+// Issues on these nodes are side effects of a planted change, not false positives.
+var RELATED = {
+  'case2-hires': ['24:3574', '24:3575', '24:3576', '24:3570', '24:3571', '24:3579', '24:3580', '24:3583', '24:3584',
+    '24:3585', '24:3586', '24:3572', '24:3573', '24:3581', '24:3582', '24:3567', '24:3568', '24:3577', '24:3569', '24:3578',
+    '24:3505', '24:3506', '24:3508', '24:3509', '24:3510', '24:3511', '24:3513', '24:3514', '24:3515', 'I24:3515;603:2688',
+    '24:3536', '24:3537', '24:3538', '24:3539', '24:3541', '24:3542', '24:3543', 'I24:3543;603:2688', '24:3535', 'I24:3535;1152:5875']
+};
+
+var f = document.getElementById('f');
+window.H = { exp: null };
+function send(m) { f.contentWindow.postMessage({ pluginMessage: m }, '*'); }
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function png(url, w, hPt, scale) {
+  var img = new Image(); img.src = url; await img.decode();
+  var c = document.createElement('canvas');
+  c.width = w || img.naturalWidth;
+  c.height = hPt ? Math.round(hPt * scale) : img.naturalHeight;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return new Promise(function (r) { c.toBlob(r, 'image/png'); });
+}
+window.addEventListener('message', async function (e) {
+  var m = e.data && e.data.pluginMessage; if (!m) return;
+  if (m.type === 'export') {
+    var S = m.scale;
+    var blob = await png('fixtures/design@' + S + 'x.png', H.exp.node.width * S, H.exp.node.height, S);
+    send({ type: 'exported', bytes: new Uint8Array(await blob.arrayBuffer()), scale: S,
+           node: H.exp.node, children: H.exp.children, ignoreIds: [] });
+  } else if (m.type === 'mark') {
+    send({ type: 'marked', count: m.regions.length });
+  }
+});
+
+H.runCase = async function (c) {
+  if (!H.exp) H.exp = await (await fetch('fixtures/export.json')).json();
+  f.src = '../ui.html?' + Date.now();
+  await new Promise(function (r) { f.onload = r; });
+  var w = f.contentWindow, d = f.contentDocument, report = null;
+  send({ type: 'target', node: { id: H.exp.node.id, name: H.exp.node.name, type: 'FRAME', width: H.exp.node.width, height: H.exp.node.height } });
+  var shotImg = new Image(); shotImg.src = c.shot; await shotImg.decode();
+  var k = shotImg.naturalWidth / H.exp.node.width;
+  var shot = await png(c.shot, null, c.cropPt, k);
+  var dt = new DataTransfer(); dt.items.add(new File([shot], c.name + '.png', { type: 'image/png' }));
+  var input = d.getElementById('file'); input.files = dt.files; input.dispatchEvent(new Event('change'));
+  for (var i = 0; i < 50 && d.getElementById('compareBtn').disabled; i++) await wait(100);
+  d.getElementById('compareBtn').click();
+  for (i = 0; i < 600 && d.getElementById('results').classList.contains('hidden'); i++) {
+    if (d.getElementById('status').className === 'err') break;
+    await wait(100);
+  }
+  // Capture the Export JSON download instead of saving a file.
+  var realCreate = w.URL.createObjectURL;
+  w.URL.createObjectURL = function (blob) { blob.text().then(function (t) { report = JSON.parse(t); }); return 'blob:x'; };
+  d.getElementById('jsonBtn').click();
+  w.URL.createObjectURL = realCreate;
+  for (i = 0; i < 50 && !report; i++) await wait(50);
+  return { report: report, status: d.getElementById('status').textContent, warning: (d.getElementById('warn') || {}).textContent || '' };
+};
+
+function idsOf(r) { return (r.nodeIds || []).concat(r.node ? [r.node.id] : []); }
+
+H.score = function (c, report) {
+  var expect = typeof c.expect === 'string' ? CASES.find(function (x) { return x.name === c.expect; }).expect : c.expect;
+  var regions = (report && report.regions) || [], used = new Set(), rows = [];
+  expect.forEach(function (e) {
+    var hit = regions.find(function (r) { return r.kind === e.kind && idsOf(r).some(function (id) { return e.nodes.indexOf(id) >= 0; }); });
+    var near = hit || regions.find(function (r) { return idsOf(r).some(function (id) { return e.nodes.indexOf(id) >= 0; }); });
+    if (hit) used.add(hit.index);
+    else if (near) used.add(near.index);
+    rows.push({ id: e.id, want: e.kind, result: hit ? 'ok' : near ? 'wrong kind: ' + near.kind : 'missed', note: (hit || near || {}).note || '' });
+  });
+  var related = RELATED[typeof c.expect === 'string' ? c.expect : c.name] || [];
+  var extra = regions.filter(function (r) { return !used.has(r.index); });
+  var fp = extra.filter(function (r) { return !idsOf(r).some(function (id) { return related.indexOf(id) >= 0; }); });
+  var side = extra.filter(function (r) { return fp.indexOf(r) < 0; });
+  return { rows: rows, fp: fp, side: side, total: regions.length };
+};
+
+H.runAll = async function (names) {
+  var out = document.getElementById('out'), html = '', summary = [];
+  for (var c of CASES) {
+    if (names && names.indexOf(c.name) < 0) continue;
+    var res = await H.runCase(c), s = H.score(c, res.report);
+    var found = s.rows.filter(function (r) { return r.result === 'ok'; }).length;
+    summary.push({ case: c.name, expected: s.rows.length, found: found,
+      wrongKind: s.rows.filter(function (r) { return /^wrong/.test(r.result); }).length,
+      missed: s.rows.filter(function (r) { return r.result === 'missed'; }).length,
+      falsePositives: s.fp.length, sideEffects: s.side.length, total: s.total, warning: res.warning, status: res.status });
+    html += '<h3>' + c.name + '</h3>' + (res.warning ? '<p class="warn">' + res.warning + '</p>' : '') +
+      '<table><tr><th>Exp</th><th>Kind</th><th>Result</th><th>Note</th></tr>' +
+      s.rows.map(function (r) { return '<tr><td>' + r.id + '</td><td>' + r.want + '</td><td class="' + (r.result === 'ok' ? 'ok' : 'bad') + '">' + r.result + '</td><td>' + r.note + '</td></tr>'; }).join('') +
+      s.fp.map(function (r) { return '<tr><td>FP</td><td>' + r.kind + '</td><td class="bad">false positive</td><td>' + r.note + ' · ' + (r.label || '') + '</td></tr>'; }).join('') +
+      s.side.map(function (r) { return '<tr><td>side</td><td>' + r.kind + '</td><td class="warn">side effect</td><td>' + r.note + ' · ' + (r.label || '') + '</td></tr>'; }).join('') +
+      '</table>';
+    out.innerHTML = html;
+  }
+  H.last = summary;
+  return summary;
+};
+</script>
